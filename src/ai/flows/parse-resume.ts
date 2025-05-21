@@ -23,7 +23,7 @@ export type ParseResumeInput = z.infer<typeof ParseResumeInputSchema>;
 
 const ParseResumeOutputSchema = z.object({
   candidateName: z.string().describe("The candidate's full name."),
-  email: z.string().email().describe("The candidate's email address.").optional(),
+  email: z.string().describe("The candidate's email address.").optional(),
   phone: z.string().describe("The candidate's phone number.").optional(),
   skills: z.array(z.string()).describe('A list of relevant skills extracted from the resume.'),
   experience: z.array(z.string()).describe('A list of key experiences extracted from the resume.'),
@@ -58,3 +58,4 @@ const parseResumeFlow = ai.defineFlow(
     return output!;
   }
 );
+
