@@ -1,4 +1,4 @@
-// src/app/page.tsx
+// src/app/login/page.tsx
 "use client";
 
 import { useEffect } from "react";
@@ -7,13 +7,13 @@ import { useAuth } from "@/contexts/AuthContext";
 import { LoginForm } from "@/components/auth/LoginForm";
 import { Loader } from "@/components/ui/loader";
 
-export default function HomePage() {
+export default function LoginPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
     if (!loading && user) {
-      router.replace("/dashboard");
+      router.replace("/dashboard"); // Redirect if already logged in
     }
   }, [user, loading, router]);
 
@@ -24,16 +24,16 @@ export default function HomePage() {
       </div>
     );
   }
-
-  if (!user) {
-    return <LoginForm />;
+  
+  // If user is already defined and we are on /login, redirect away
+  if (user) {
+     return (
+      <div className="flex items-center justify-center min-h-screen bg-background">
+        <Loader size={48} />
+        <p className="ml-4">Redirecting to dashboard...</p>
+      </div>
+    );
   }
 
-  // This part should ideally not be reached if redirect works, but as a fallback:
-  return (
-    <div className="flex items-center justify-center min-h-screen bg-background">
-      <Loader size={48} />
-      <p className="ml-4">Redirecting to dashboard...</p>
-    </div>
-  );
+  return <LoginForm />;
 }
