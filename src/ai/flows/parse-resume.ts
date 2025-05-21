@@ -54,8 +54,19 @@ const parseResumeFlow = ai.defineFlow(
     outputSchema: ParseResumeOutputSchema,
   },
   async input => {
-    const {output} = await prompt(input);
-    return output!;
+    const response = await prompt(input);
+    // Genkit v1.x structure for prompt response
+    if (response.errors && response.errors.length > 0) {
+      const errorMessages = response.errors.map(e => e.message || String(e)).join(', ');
+      console.error('Error from parseResumePrompt:', errorMessages, response.errors);
+      throw new Error(`AI prompt failed: ${errorMessages}`);
+    }
+
+    if (!response.output) {
+      console.error('ParseResumePrompt returned no output. Full response:', response);
+      throw new Error('The AI model did not return the expected output for resume parsing.');
+    }
+    
+    return response.output;
   }
 );
-

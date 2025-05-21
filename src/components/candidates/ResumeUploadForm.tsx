@@ -1,7 +1,7 @@
 // src/components/candidates/ResumeUploadForm.tsx
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useForm, type SubmitHandler } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
@@ -19,6 +19,7 @@ import { useAppContext } from "@/contexts/AppContext";
 import { useRouter } from "next/navigation";
 import type { Candidate } from "@/types";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/contexts/AuthContext";
 
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
@@ -39,6 +40,7 @@ type ResumeUploadFormValues = z.infer<typeof resumeUploadSchema>;
 export function ResumeUploadForm() {
   const { toast } = useToast();
   const { addCandidate } = useAppContext();
+  const { user } = useAuth();
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -48,19 +50,34 @@ export function ResumeUploadForm() {
     resolver: zodResolver(resumeUploadSchema),
   });
 
-  const resumeFile = watch("resume");
-  if (resumeFile && resumeFile.length > 0 && resumeFile[0].name !== fileName) {
-    setFileName(resumeFile[0].name);
-  }
+  const watchedFiles = watch("resume");
+  useEffect(() => {
+    if (watchedFiles && watchedFiles.length > 0) {
+      setFileName(watchedFiles[0].name);
+    } else {
+      setFileName(null);
+    }
+  }, [watchedFiles]);
 
 
   const onSubmit: SubmitHandler<ResumeUploadFormValues> = async (data) => {
+    if (!user) {
+      setError("User not authenticated. Please log in.");
+      toast({
+        title: "Authentication Error",
+        description: "You must be logged in to upload a resume.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setLoading(true);
     setError(null);
 
     if (!data.resume || data.resume.length === 0) {
+      // This case should ideally be caught by schema validation, but good to have defensively
       setError("No file selected.");
-      setLoading(false);
+      setLoading(false); // setLoading(false) is in finally, but being explicit here is okay
       return;
     }
 
@@ -70,7 +87,6 @@ export function ResumeUploadForm() {
       const dataUri = await fileToDataUri(file);
       const parsedData: ParseResumeOutput = await parseResume({ resumeDataUri: dataUri });
       
-      // Prepare candidate data without ID, as AppContext will handle it with Firestore
       const candidateToCreate: Omit<Candidate, "id" | "userId"> = {
         resumeFileName: file.name,
         parsedText: '', 
@@ -82,27 +98,27 @@ export function ResumeUploadForm() {
       if (newCandidate) {
         toast({
           title: "Resume Parsed Successfully!",
-          description: `${newCandidate.candidateName}'s resume has been processed.`,
+          description: `${newCandidate.candidateName || 'Candidate'}'s resume has been processed.`,
           variant: "default",
         });
         router.push(`/dashboard/candidates/${newCandidate.id}`);
         reset(); 
-        setFileName(null);
+        setFileName(null); // Clear fileName after successful upload & reset
       } else {
-        throw new Error("Failed to save candidate after parsing.");
+        throw new Error("Failed to save candidate after parsing. User might not be authenticated or a database error occurred.");
       }
 
     } catch (err: any) {
-      console.error("Error parsing resume:", err);
-      const errorMessage = err.message || "Failed to parse resume. Please try again.";
+      console.error("Detailed error in ResumeUploadForm onSubmit:", err);
+      const errorMessage = err.message || (typeof err === 'string' ? err : "An unknown error occurred during resume parsing or saving.");
       setError(errorMessage);
       toast({
-        title: "Error Parsing Resume",
+        title: "Upload Failed",
         description: errorMessage,
         variant: "destructive",
       });
     } finally {
-      setLoading(false);
+      setLoading(false); // Ensure loading is always reset
     }
   };
 
@@ -157,7 +173,7 @@ export function ResumeUploadForm() {
             {errors.resume && <p className="text-sm text-destructive pt-1">{errors.resume.message}</p>}
           </div>
           
-          <Button type="submit" className="w-full text-lg py-6" disabled={loading}>
+          <Button type="submit" className="w-full text-lg py-6" disabled={loading || !watchedFiles || watchedFiles.length === 0}>
             {loading ? (
               <Loader size={24} className="mr-2" />
             ) : (
