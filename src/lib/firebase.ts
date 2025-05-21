@@ -12,8 +12,10 @@ const appId = process.env.NEXT_PUBLIC_FIREBASE_APP_ID;
 const measurementId = process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID;
 
 // Client-side check and log for missing critical Firebase config
+// This helps in diagnosing issues in deployed/preview environments
 if (typeof window !== 'undefined') { // Only run this check on the client-side
   if (!apiKey) {
+    // This console error is intentional for debugging missing env vars in previews
     console.error(
       "CRITICAL Firebase Config Error (Client-Side): NEXT_PUBLIC_FIREBASE_API_KEY is missing or undefined. " +
       "This app WILL NOT WORK without it. " +
@@ -22,6 +24,7 @@ if (typeof window !== 'undefined') { // Only run this check on the client-side
     );
   }
   if (!projectId) {
+    // This console error is intentional for debugging missing env vars in previews
     console.error(
       "CRITICAL Firebase Config Error (Client-Side): NEXT_PUBLIC_FIREBASE_PROJECT_ID is missing or undefined. " +
       "This app WILL NOT WORK without it. " +
