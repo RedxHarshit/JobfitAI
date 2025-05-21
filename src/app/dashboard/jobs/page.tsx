@@ -7,9 +7,19 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter }
 import { useAppContext } from '@/contexts/AppContext';
 import { Briefcase, PlusCircle, Eye } from 'lucide-react';
 import { format } from 'date-fns';
+import { Loader } from '@/components/ui/loader';
 
 export default function JobsPage() {
-  const { jobs } = useAppContext();
+  const { jobs, loadingData } = useAppContext();
+
+  if (loadingData) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[calc(100vh-200px)]">
+        <Loader size={48} />
+        <p className="mt-4 text-muted-foreground">Loading jobs...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

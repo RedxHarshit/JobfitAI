@@ -18,18 +18,20 @@ import { generateInterviewQuestions } from "@/ai/flows/generate-interview-questi
 import { UserCircle, FileText, Briefcase, Lightbulb, Sparkles, Brain, AlertTriangle } from "lucide-react";
 import Image from "next/image";
 import { Progress } from "@/components/ui/progress";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface CandidateProfileClientProps {
   candidate: Candidate;
 }
 
 export function CandidateProfileClient({ candidate }: CandidateProfileClientProps) {
+  const { user } = useAuth();
   const { jobs, getJobById, updateCandidate } = useAppContext();
   const { toast } = useToast();
 
-  const [selectedJobId, setSelectedJobId] = useState<string | undefined>(candidate.matchData?.jobId);
+  const [selectedJobId, setSelectedJobId] = useState<string | undefined>(candidate.matchData?.jobId ?? undefined);
   const [customJobDescription, setCustomJobDescription] = useState<string>("");
-  const [useCustomJob, setUseCustomJob] = useState<boolean>(false);
+  const [useCustomJob, setUseCustomJob] = useState<boolean>(!candidate.matchData?.jobId && !!candidate.matchData); // If matchData exists but no jobId, it was custom
   
   const [matchLoading, setMatchLoading] = useState(false);
   const [matchResult, setMatchResult] = useState<MatchCandidateToJobOutput | null>(candidate.matchData || null);
@@ -38,7 +40,6 @@ export function CandidateProfileClient({ candidate }: CandidateProfileClientProp
   const [interviewQuestions, setInterviewQuestions] = useState<string[]>(candidate.interviewQuestions || []);
 
   const candidateResumeText = useMemo(() => {
-    // Combine key parts of the resume for AI context
     let text = `Candidate Name: ${candidate.candidateName}\n`;
     if (candidate.email) text += `Email: ${candidate.email}\n`;
     if (candidate.phone) text += `Phone: ${candidate.phone}\n`;
@@ -53,11 +54,19 @@ export function CandidateProfileClient({ candidate }: CandidateProfileClientProp
         setSelectedJobId(candidate.matchData.jobId);
         const job = getJobById(candidate.matchData.jobId);
         if(job) setCustomJobDescription(job.description);
+        setUseCustomJob(false);
+    } else if (candidate.matchData) { // Matched with custom
+        setUseCustomJob(true);
+        // Potentially load custom description if we stored it, for now it's transient
     }
   }, [candidate.matchData, getJobById]);
 
 
   const handleMatchCandidate = async () => {
+    if (!user) {
+      toast({ title: "Authentication Error", description: "You must be logged in.", variant: "destructive" });
+      return;
+    }
     const jobDescriptionToUse = useCustomJob ? customJobDescription : (selectedJobId ? getJobById(selectedJobId)?.description : "");
 
     if (!jobDescriptionToUse) {
@@ -76,8 +85,12 @@ export function CandidateProfileClient({ candidate }: CandidateProfileClientProp
         jobDescription: jobDescriptionToUse,
       });
       setMatchResult(result);
-      const updatedCandidateData = { ...candidate, matchData: { ...result, jobId: useCustomJob ? "custom" : selectedJobId! } };
-      updateCandidate(updatedCandidateData);
+      const updatedCandidateData: Candidate = { 
+        ...candidate, 
+        matchData: { ...result, jobId: useCustomJob ? null : selectedJobId! },
+        userId: user.uid // Ensure userId is part of the update
+      };
+      await updateCandidate(updatedCandidateData);
       toast({ title: "Matching Complete!", description: `Match score: ${Math.round(result.matchScore * 100)}%` });
     } catch (error: any) {
       toast({ title: "Matching Error", description: error.message || "Failed to match candidate.", variant: "destructive" });
@@ -87,7 +100,11 @@ export function CandidateProfileClient({ candidate }: CandidateProfileClientProp
   };
 
   const handleGenerateQuestions = async () => {
-    const jobDescriptionToUse = matchResult && getJobById(candidate.matchData?.jobId || "")?.description || customJobDescription || (selectedJobId ? getJobById(selectedJobId)?.description : "");
+     if (!user) {
+      toast({ title: "Authentication Error", description: "You must be logged in.", variant: "destructive" });
+      return;
+    }
+    const jobDescriptionToUse = matchResult && candidate.matchData?.jobId && getJobById(candidate.matchData.jobId)?.description || customJobDescription || (selectedJobId ? getJobById(selectedJobId)?.description : "");
 
     if (!jobDescriptionToUse) {
       toast({ title: "Job Description Missing", description: "Please match with a job or provide a job description first.", variant: "destructive" });
@@ -106,8 +123,12 @@ export function CandidateProfileClient({ candidate }: CandidateProfileClientProp
       });
       const questionsArray = result.interviewQuestions.split('\n').filter(q => q.trim() !== '');
       setInterviewQuestions(questionsArray);
-      const updatedCandidateData = { ...candidate, interviewQuestions: questionsArray };
-      updateCandidate(updatedCandidateData);
+      const updatedCandidateData: Candidate = { 
+        ...candidate, 
+        interviewQuestions: questionsArray,
+        userId: user.uid // Ensure userId is part of the update
+      };
+      await updateCandidate(updatedCandidateData);
       toast({ title: "Interview Questions Generated!", description: "Insightful questions are ready for your review." });
     } catch (error: any) {
       toast({ title: "Question Generation Error", description: error.message || "Failed to generate questions.", variant: "destructive" });
@@ -186,7 +207,16 @@ export function CandidateProfileClient({ candidate }: CandidateProfileClientProp
               <div className="grid md:grid-cols-2 gap-4 items-start">
                 <div>
                   <Label htmlFor="job-select" className="mb-1 block">Select Existing Job</Label>
-                  <Select onValueChange={(value) => { setSelectedJobId(value); setUseCustomJob(false); const job = getJobById(value); if (job) setCustomJobDescription(job.description); }} value={useCustomJob ? undefined : selectedJobId} disabled={useCustomJob}>
+                  <Select 
+                    onValueChange={(value) => { 
+                      setSelectedJobId(value); 
+                      setUseCustomJob(false); 
+                      const job = getJobById(value); 
+                      if (job) setCustomJobDescription(job.description); 
+                    }} 
+                    value={useCustomJob ? "" : selectedJobId} // Clear select if custom is used
+                    disabled={useCustomJob}
+                  >
                     <SelectTrigger id="job-select">
                       <SelectValue placeholder="Choose a job..." />
                     </SelectTrigger>
@@ -196,7 +226,15 @@ export function CandidateProfileClient({ candidate }: CandidateProfileClientProp
                   </Select>
                 </div>
                  <div>
-                    <Button variant={useCustomJob ? "default" : "outline"} onClick={() => {setUseCustomJob(true); setSelectedJobId(undefined);}} className="w-full mb-2 mt-0 md:mt-6">
+                    <Button 
+                      variant={useCustomJob ? "secondary" : "outline"} // Use secondary when active
+                      onClick={() => {
+                        setUseCustomJob(true); 
+                        setSelectedJobId(undefined);
+                        // setCustomJobDescription(""); // Optionally clear custom description
+                      }} 
+                      className="w-full mb-2 mt-0 md:mt-6"
+                    >
                         Or Use Custom Job Description
                     </Button>
                  </div>
@@ -209,7 +247,7 @@ export function CandidateProfileClient({ candidate }: CandidateProfileClientProp
                 </div>
               )}
               
-              <Button onClick={handleMatchCandidate} disabled={matchLoading || (!selectedJobId && !useCustomJob)} className="w-full md:w-auto">
+              <Button onClick={handleMatchCandidate} disabled={matchLoading || (!selectedJobId && !useCustomJob) || (useCustomJob && !customJobDescription)} className="w-full md:w-auto">
                 {matchLoading ? <Loader size={20} className="mr-2" /> : <Sparkles className="mr-2" />}
                 {matchLoading ? "Analyzing Match..." : "Analyze Match with AI"}
               </Button>
@@ -219,7 +257,7 @@ export function CandidateProfileClient({ candidate }: CandidateProfileClientProp
                   <CardHeader>
                     <CardTitle>Match Result</CardTitle>
                     <CardDescription>
-                      For job: {useCustomJob ? "Custom Description" : getJobById(selectedJobId!)?.title || "Selected Job"}
+                      For job: {useCustomJob ? "Custom Description" : (selectedJobId ? getJobById(selectedJobId)?.title : "N/A") }
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-3">
@@ -245,17 +283,21 @@ export function CandidateProfileClient({ candidate }: CandidateProfileClientProp
               <CardDescription>Generate tailored interview questions based on the candidate's profile and job requirements.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <Button onClick={handleGenerateQuestions} disabled={questionsLoading || (!matchResult && !customJobDescription && !selectedJobId)} className="w-full md:w-auto">
+              <Button 
+                onClick={handleGenerateQuestions} 
+                disabled={questionsLoading || (!candidate.matchData && !customJobDescription && !selectedJobId)} 
+                className="w-full md:w-auto"
+              >
                 {questionsLoading ? <Loader size={20} className="mr-2" /> : <Sparkles className="mr-2" />}
                 {questionsLoading ? "Generating Questions..." : "Generate Questions with AI"}
               </Button>
-              {!matchResult && !customJobDescription && !selectedJobId && (
-                <div className="p-4 bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700 rounded-md">
+              {(!candidate.matchData && !customJobDescription && !selectedJobId) && (
+                <div className="p-4 bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700 rounded-md dark:bg-yellow-900/30 dark:border-yellow-600 dark:text-yellow-300">
                   <div className="flex items-start">
-                    <AlertTriangle className="h-5 w-5 mr-2 text-yellow-600"/>
+                    <AlertTriangle className="h-5 w-5 mr-2 text-yellow-600 dark:text-yellow-400"/>
                     <div>
-                      <p className="font-bold">Job Description Required</p>
-                      <p className="text-sm">Please select or provide a job description in the "AI Matching" tab before generating interview questions.</p>
+                      <p className="font-bold">Job Context Required</p>
+                      <p className="text-sm">Please perform an "AI Matching" first, or select/provide a job description in that tab, before generating interview questions. This gives the AI context about the role.</p>
                     </div>
                   </div>
                 </div>

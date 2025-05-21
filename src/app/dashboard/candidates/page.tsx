@@ -8,9 +8,19 @@ import { useAppContext } from '@/contexts/AppContext';
 import { Users, UserPlus, Eye, FileText, Mail, Phone } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import Image from 'next/image';
+import { Loader } from '@/components/ui/loader';
 
 export default function CandidatesPage() {
-  const { candidates } = useAppContext();
+  const { candidates, loadingData } = useAppContext();
+
+  if (loadingData) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[calc(100vh-200px)]">
+        <Loader size={48} />
+        <p className="mt-4 text-muted-foreground">Loading candidates...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -50,15 +60,15 @@ export default function CandidatesPage() {
               <CardHeader>
                 <div className="flex items-center gap-4">
                   <Image 
-                    src={`https://placehold.co/64x64.png?text=${candidate.candidateName[0]}`} 
-                    alt={candidate.candidateName} 
+                    src={`https://placehold.co/64x64.png?text=${candidate.candidateName ? candidate.candidateName[0] : 'C'}`} 
+                    alt={candidate.candidateName || "Candidate"} 
                     width={64} 
                     height={64} 
                     className="rounded-full"
                     data-ai-hint="person avatar" 
                   />
                   <div>
-                    <CardTitle className="text-xl">{candidate.candidateName}</CardTitle>
+                    <CardTitle className="text-xl">{candidate.candidateName || "N/A"}</CardTitle>
                     {candidate.email && (
                       <CardDescription className="flex items-center gap-1 text-xs">
                         <Mail size={12} /> {candidate.email}
@@ -85,6 +95,7 @@ export default function CandidatesPage() {
                       <Badge key={index} variant="secondary">{skill}</Badge>
                     ))}
                     {candidate.skills.length > 5 && <Badge variant="outline">+{candidate.skills.length - 5} more</Badge>}
+                    {candidate.skills.length === 0 && <span className="text-xs text-muted-foreground">No skills listed.</span>}
                   </div>
                 </div>
               </CardContent>

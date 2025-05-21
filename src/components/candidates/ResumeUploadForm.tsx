@@ -18,6 +18,8 @@ import { fileToDataUri } from "@/utils/fileUtils";
 import { useAppContext } from "@/contexts/AppContext";
 import { useRouter } from "next/navigation";
 import type { Candidate } from "@/types";
+import { cn } from "@/lib/utils";
+
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
 const ALLOWED_FILE_TYPES = ["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "text/plain"];
@@ -68,23 +70,27 @@ export function ResumeUploadForm() {
       const dataUri = await fileToDataUri(file);
       const parsedData: ParseResumeOutput = await parseResume({ resumeDataUri: dataUri });
       
-      const newCandidate: Candidate = {
-        id: crypto.randomUUID(), // Simple unique ID for client-side
+      // Prepare candidate data without ID, as AppContext will handle it with Firestore
+      const candidateToCreate: Omit<Candidate, "id" | "userId"> = {
         resumeFileName: file.name,
-        parsedText: '', // Or extract text if needed, parseResume handles content
+        parsedText: '', 
         ...parsedData,
       };
       
-      addCandidate(newCandidate);
+      const newCandidate = await addCandidate(candidateToCreate);
 
-      toast({
-        title: "Resume Parsed Successfully!",
-        description: `${parsedData.candidateName}'s resume has been processed.`,
-        variant: "default",
-      });
-      router.push(`/dashboard/candidates/${newCandidate.id}`);
-      reset(); // Reset form
-      setFileName(null);
+      if (newCandidate) {
+        toast({
+          title: "Resume Parsed Successfully!",
+          description: `${newCandidate.candidateName}'s resume has been processed.`,
+          variant: "default",
+        });
+        router.push(`/dashboard/candidates/${newCandidate.id}`);
+        reset(); 
+        setFileName(null);
+      } else {
+        throw new Error("Failed to save candidate after parsing.");
+      }
 
     } catch (err: any) {
       console.error("Error parsing resume:", err);

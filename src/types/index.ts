@@ -4,14 +4,16 @@ import type { MatchCandidateToJobOutput } from "@/ai/flows/match-candidate-to-jo
 
 export interface Candidate extends ParseResumeOutput {
   id: string;
+  userId: string; // To associate with the Firebase User UID
   resumeFileName?: string;
   parsedText?: string; // Full text of the resume if needed later
-  matchData?: MatchCandidateToJobOutput & { jobId: string };
+  matchData?: MatchCandidateToJobOutput & { jobId: string | null }; // jobId can be null if custom
   interviewQuestions?: string[]; // Array of questions
 }
 
 export interface Job {
-  id: string;
+  id:string;
+  userId: string; // To associate with the Firebase User UID
   title: string;
   description: string;
   createdAt: Date;

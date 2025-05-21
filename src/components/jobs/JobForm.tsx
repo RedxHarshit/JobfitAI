@@ -36,27 +36,27 @@ export function JobForm() {
 
   const onSubmit: SubmitHandler<JobFormValues> = async (data) => {
     setLoading(true);
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 1000));
-
     try {
-      const newJob: Job = {
-        id: crypto.randomUUID(), // Simple unique ID
-        ...data,
-        createdAt: new Date(),
+      const jobToCreate: Omit<Job, "id" | "userId" | "createdAt"> = {
+        title: data.title,
+        description: data.description,
       };
-      addJob(newJob);
+      const newJob = await addJob(jobToCreate);
 
-      toast({
-        title: "Job Created Successfully!",
-        description: `The job "${data.title}" has been posted.`,
-      });
-      reset();
-      router.push("/dashboard/jobs"); 
-    } catch (err) {
+      if (newJob) {
+        toast({
+          title: "Job Created Successfully!",
+          description: `The job "${newJob.title}" has been posted.`,
+        });
+        reset();
+        router.push("/dashboard/jobs");
+      } else {
+         throw new Error("Failed to save job posting.");
+      }
+    } catch (err: any) {
       toast({
         title: "Error Creating Job",
-        description: "Something went wrong. Please try again.",
+        description: err.message || "Something went wrong. Please try again.",
         variant: "destructive",
       });
     } finally {

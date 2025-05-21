@@ -7,9 +7,20 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { UploadCloud, Users, Briefcase, FileText, BarChart3, Sparkles } from 'lucide-react';
 import { useAppContext } from '@/contexts/AppContext';
 import Image from 'next/image';
+import { Loader } from '@/components/ui/loader';
+
 
 export default function DashboardPage() {
-  const { candidates, jobs } = useAppContext();
+  const { candidates, jobs, loadingData } = useAppContext();
+
+   if (loadingData) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[calc(100vh-200px)]">
+        <Loader size={48} />
+        <p className="mt-4 text-muted-foreground">Loading dashboard data...</p>
+      </div>
+    );
+  }
 
   const stats = [
     { title: "Total Candidates", value: candidates.length, icon: Users, color: "text-primary" },
