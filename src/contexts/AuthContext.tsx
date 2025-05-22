@@ -2,7 +2,7 @@
 // src/contexts/AuthContext.tsx
 "use client";
 
-import type { User as FirebaseUser, AuthError, ConfirmationResult } from "firebase/auth";
+import type { User as FirebaseUser, AuthError, ConfirmationResult, RecaptchaVerifier } from "firebase/auth";
 import { createContext, useContext, useEffect, useState, ReactNode, useCallback } from "react";
 import { auth } from "@/lib/firebase";
 import { 
@@ -11,7 +11,7 @@ import {
   createUserWithEmailAndPassword, 
   signInWithEmailAndPassword,
   sendPasswordResetEmail,
-  RecaptchaVerifier,
+  // RecaptchaVerifier, // No longer creating it here
   signInWithPhoneNumber,
   sendEmailVerification,
 } from "firebase/auth";
@@ -23,6 +23,7 @@ export interface SignUpFormValues extends BaseEmailSignUpFormValues {
 
 interface AuthContextType {
   user: FirebaseUser | null;
+  auth: typeof auth | null; // Expose auth for direct use if needed by components like LoginForm for reCAPTCHA
   loading: boolean;
   error: AuthError | null;
   signUp: (values: SignUpFormValues) => Promise<FirebaseUser | null>;
@@ -30,9 +31,9 @@ interface AuthContextType {
   signOut: () => Promise<void>;
   sendPasswordReset: (email: string) => Promise<boolean>;
   sendVerificationEmail: (user: FirebaseUser) => Promise<boolean>;
-  signInWithPhone: (phoneNumber: string) => Promise<ConfirmationResult | null>; 
+  signInWithPhone: (phoneNumber: string, appVerifier: RecaptchaVerifier) => Promise<ConfirmationResult | null>; 
   confirmPhoneOtp: (confirmationResult: ConfirmationResult, otp: string) => Promise<FirebaseUser | null>; 
-  initializeRecaptcha: (containerId: string) => void; 
+  // initializeRecaptcha is removed
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -41,8 +42,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<AuthError | null>(null);
-  const [recaptchaVerifier, setRecaptchaVerifier] = useState<RecaptchaVerifier | null>(null);
-
+  // recaptchaVerifier state is removed
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
@@ -52,46 +52,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     return () => unsubscribe();
   }, []);
 
-  const initializeRecaptcha = useCallback((containerId: string) => {
-    console.log("AuthContext: initializeRecaptcha called for container:", containerId);
-    if (!auth) {
-        console.error("AuthContext: Firebase auth not initialized for reCAPTCHA");
-        setError({code: "auth/internal-error", message:"Firebase auth not initialized"} as AuthError);
-        return;
-    }
-    try {
-        if (window.recaptchaVerifierInstance) {
-            console.log("AuthContext: Using existing window.recaptchaVerifierInstance.");
-            setRecaptchaVerifier(window.recaptchaVerifierInstance);
-            return;
-        }
-        console.log("AuthContext: Creating new RecaptchaVerifier.");
-        const verifier = new RecaptchaVerifier(auth, containerId, {
-            'size': 'invisible',
-            'callback': (response: any) => {
-                console.log("AuthContext: reCAPTCHA solved:", response);
-            },
-            'expired-callback': () => {
-                console.warn("AuthContext: reCAPTCHA expired, please try again.");
-                setError({code: "auth/captcha-check-failed", message:"reCAPTCHA expired, please try again."} as AuthError);
-                // Attempt to reset reCAPTCHA for the user to try again
-                window.recaptchaVerifierInstance?.render().then(widgetId => {
-                    if (typeof grecaptcha !== 'undefined' && grecaptcha.reset) {
-                        grecaptcha.reset(widgetId);
-                        console.log("AuthContext: reCAPTCHA reset after expiration.");
-                    }
-                }).catch(err => console.error("AuthContext: Error resetting reCAPTCHA after expiration:", err));
-            }
-        });
-        setRecaptchaVerifier(verifier);
-        window.recaptchaVerifierInstance = verifier;
-        console.log("AuthContext: RecaptchaVerifier created and set on window and state.");
-    } catch (err) {
-        console.error("AuthContext: Error initializing RecaptchaVerifier:", err);
-        setError(err as AuthError);
-    }
-  }, [auth]);
-
+  // initializeRecaptcha method is removed
 
   const sendVerificationEmail = async (fbUser: FirebaseUser): Promise<boolean> => {
     if (!auth || !fbUser) {
@@ -169,7 +130,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
-  const signInWithPhone = async (phoneNumber: string): Promise<ConfirmationResult | null> => {
+  const signInWithPhone = async (phoneNumber: string, appVerifier: RecaptchaVerifier): Promise<ConfirmationResult | null> => {
     setLoading(true);
     setError(null);
     console.log("AuthContext: signInWithPhone called for", phoneNumber);
@@ -181,37 +142,31 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       return null;
     }
     
-    const verifierToUse = recaptchaVerifier || window.recaptchaVerifierInstance;
-    console.log("AuthContext: Verifier status - state:", !!recaptchaVerifier, "window:", !!window.recaptchaVerifierInstance);
-
-
-    if (!verifierToUse) {
-      console.error("AuthContext: reCAPTCHA verifier is null in signInWithPhone.");
-      setError({code: "auth/captcha-check-failed", message:"reCAPTCHA verifier not initialized. Ensure 'recaptcha-container' div exists and is visible."}as AuthError);
+    if (!appVerifier) {
+      console.error("AuthContext: App verifier (reCAPTCHA) is null in signInWithPhone.");
+      setError({code: "auth/captcha-check-failed", message:"reCAPTCHA verifier not provided to signInWithPhone."} as AuthError);
       setLoading(false);
       return null;
     }
 
     try {
       console.log("AuthContext: Attempting signInWithPhoneNumber with Firebase...");
-      const confirmation = await signInWithPhoneNumber(auth, phoneNumber, verifierToUse);
+      const confirmation = await signInWithPhoneNumber(auth, phoneNumber, appVerifier);
       console.log("AuthContext: signInWithPhoneNumber successful, confirmation result received.");
-      setLoading(false);
       return confirmation;
     } catch (err: any) {
       console.error("AuthContext: Error during signInWithPhoneNumber:", err);
       setError(err as AuthError);
-      if (err.code === 'auth/captcha-check-failed' || err.code === 'auth/network-request-failed' || err.code === 'auth/too-many-requests') {
-        console.warn("AuthContext: Attempting to reset reCAPTCHA due to error:", err.code);
-        verifierToUse.render().then(widgetId => {
-            if (typeof grecaptcha !== 'undefined' && grecaptcha.reset) {
-                grecaptcha.reset(widgetId);
-                console.log("AuthContext: reCAPTCHA reset after error.");
-            }
-        }).catch(resetError => console.error("AuthContext: Error resetting reCAPTCHA:", resetError));
+      // If reCAPTCHA related errors occur, the calling component (LoginForm) might need to handle re-rendering the verifier.
+      // For 'auth/captcha-check-failed' or specific reCAPTCHA errors, it might be useful to advise re-trying.
+      if (err.code === 'auth/captcha-check-failed' && appVerifier.render) {
+         console.warn("AuthContext: Attempting to reset reCAPTCHA due to error:", err.code);
+         // It's generally better to handle re-render/reset in the component owning the verifier.
+         // Calling appVerifier.render() here might still face issues if the element is gone.
       }
-      setLoading(false);
       return null;
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -221,18 +176,19 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     try {
       const userCredential = await confirmationResult.confirm(otp);
       setUser(userCredential.user);
-      setLoading(false);
       return userCredential.user;
     } catch (err) {
       setError(err as AuthError);
-      setLoading(false);
       return null;
+    } finally {
+      setLoading(false);
     }
   };
 
   return (
     <AuthContext.Provider value={{ 
       user, 
+      auth, // Expose auth instance
       loading, 
       error, 
       signUp, 
@@ -242,7 +198,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       sendVerificationEmail,
       signInWithPhone, 
       confirmPhoneOtp,
-      initializeRecaptcha
+      // initializeRecaptcha removed
     }}>
       {children}
     </AuthContext.Provider>
@@ -257,9 +213,10 @@ export const useAuth = (): AuthContextType => {
   return context;
 };
 
-declare global {
-  interface Window {
-    recaptchaVerifierInstance?: RecaptchaVerifier;
-    grecaptcha?: any; 
-  }
-}
+// window.recaptchaVerifierInstance is no longer managed by AuthContext
+// declare global {
+//   interface Window {
+//     recaptchaVerifierInstance?: RecaptchaVerifier;
+//     grecaptcha?: any; 
+//   }
+// }

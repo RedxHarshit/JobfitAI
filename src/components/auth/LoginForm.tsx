@@ -17,6 +17,7 @@ import { Eye, EyeOff, LogIn, UserPlus, MailQuestion, PhoneIcon, KeyRound } from 
 import { useToast } from "@/hooks/use-toast";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { ConfirmationResult } from "firebase/auth";
+import { RecaptchaVerifier } from "firebase/auth"; // Import RecaptchaVerifier
 
 const emailLoginSchema = z.object({
   email: z.string().email({ message: "Invalid email address" }),
@@ -49,12 +50,13 @@ export type OtpFormValues = z.infer<typeof otpSchema>;
 
 export function LoginForm() {
   const { 
+    auth, // Get auth instance from context
     signIn, 
     signUp, 
     sendPasswordReset, 
     signInWithPhone, 
     confirmPhoneOtp,
-    initializeRecaptcha,
+    // initializeRecaptcha removed from context
     error: authError, 
     loading 
   } = useAuth();
@@ -85,22 +87,60 @@ export function LoginForm() {
   });
 
   const recaptchaContainerRef = useRef<HTMLDivElement>(null);
+  const verifierRef = useRef<RecaptchaVerifier | null>(null);
+
 
   useEffect(() => {
-    console.log("LoginForm: authMethod changed to", authMethod);
-    if (authMethod === "phone" && recaptchaContainerRef.current && !window.recaptchaVerifierInstance) {
-        console.log("LoginForm useEffect: Attempting to initialize reCAPTCHA because it's not on window and phone tab is active.");
-        initializeRecaptcha('recaptcha-container');
+    if (authMethod === "phone") {
+      if (auth && recaptchaContainerRef.current && !verifierRef.current) {
+        console.log("LoginForm: Initializing reCAPTCHA directly in LoginForm.");
+        try {
+          const verifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
+            'size': 'invisible',
+            'callback': (response: any) => {
+              console.log("LoginForm: reCAPTCHA solved (callback):", response);
+              // This callback usually means the user has passed the challenge.
+              // If signInWithPhoneNumber was called, it will proceed.
+            },
+            'expired-callback': () => {
+              console.warn("LoginForm: reCAPTCHA expired, please try sending OTP again.");
+              toast({ title: "reCAPTCHA Expired", description: "Please try sending the OTP again.", variant: "destructive" });
+              if (verifierRef.current) {
+                verifierRef.current.clear(); // Clear the old one
+                verifierRef.current = null; // Nullify ref to allow re-initialization on next attempt
+              }
+            }
+          });
+          verifier.render().then(widgetId => {
+            console.log("LoginForm: reCAPTCHA rendered, widgetId:", widgetId);
+            verifierRef.current = verifier;
+          }).catch(err => {
+            console.error("LoginForm: reCAPTCHA render error:", err);
+            toast({ title: "reCAPTCHA Error", description: "Could not render reCAPTCHA. Ensure the domain is authorized in Firebase console.", variant: "destructive" });
+          });
+        } catch (error) {
+            console.error("LoginForm: Error creating RecaptchaVerifier instance:", error);
+            toast({ title: "reCAPTCHA Setup Error", description: "Failed to set up reCAPTCHA.", variant: "destructive" });
+        }
+      }
+    } else {
+      // If switching away from phone, clear the verifier
+      if (verifierRef.current) {
+        console.log("LoginForm: Clearing reCAPTCHA on tab switch from phone.");
+        verifierRef.current.clear();
+        verifierRef.current = null;
+      }
     }
-    // Optional: Cleanup reCAPTCHA if switching away from phone tab.
-    // return () => {
-    //   if (window.recaptchaVerifierInstance && authMethod !== 'phone') {
-    //     window.recaptchaVerifierInstance.clear();
-    //     window.recaptchaVerifierInstance = undefined; // Or handle this in AuthContext
-    //     console.log("LoginForm: Cleared reCAPTCHA on tab switch from phone.");
-    //   }
-    // };
-  }, [authMethod, initializeRecaptcha]); // Removed recaptchaContainerRef as it's stable
+  
+    // Cleanup on component unmount
+    return () => {
+      if (verifierRef.current) {
+        console.log("LoginForm: Cleaning up reCAPTCHA on unmount.");
+        verifierRef.current.clear();
+        verifierRef.current = null;
+      }
+    };
+  }, [authMethod, auth]); // Depend on auth method and the auth object from context
 
 
   const handleEmailSubmit: SubmitHandler<any> = async (data) => {
@@ -113,19 +153,51 @@ export function LoginForm() {
   };
   
   const handleSendOtp: SubmitHandler<PhoneFormValues> = async (data) => {
-    if (authMethod === "phone" && recaptchaContainerRef.current && !window.recaptchaVerifierInstance) {
-        console.warn("handleSendOtp: Attempting to initialize reCAPTCHA as it seems not ready. This is a fallback.");
-        initializeRecaptcha('recaptcha-container'); // Ensure it's initialized if useEffect didn't catch it
+    if (!verifierRef.current) {
+      toast({ title: "reCAPTCHA Error", description: "reCAPTCHA is not ready. Please wait a moment or try again. If this persists, ensure your domain is authorized in Firebase.", variant: "destructive" });
+      // Attempt to re-initialize if it's missing and container exists
+      if (auth && recaptchaContainerRef.current) {
+        console.log("LoginForm handleSendOtp: verifier missing, attempting re-initialization.");
+         try {
+            const verifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
+              'size': 'invisible',
+              'callback': (response: any) => { console.log("reCAPTCHA solved in re-init:", response); },
+              'expired-callback': () => { 
+                toast({ title: "reCAPTCHA Expired", description: "Please try sending OTP again.", variant: "destructive" });
+                if (verifierRef.current) { verifierRef.current.clear(); verifierRef.current = null; }
+              }
+            });
+            await verifier.render();
+            verifierRef.current = verifier;
+            console.log("LoginForm handleSendOtp: reCAPTCHA re-initialized and rendered.");
+          } catch (error) {
+            console.error("LoginForm handleSendOtp: Error re-initializing reCAPTCHA:", error);
+            toast({ title: "reCAPTCHA Re-init Error", description: "Failed to re-initialize reCAPTCHA.", variant: "destructive" });
+            return;
+          }
+      } else {
+        return;
+      }
     }
 
-    const result = await signInWithPhone(data.phoneNumber);
+    const result = await signInWithPhone(data.phoneNumber, verifierRef.current);
     if (result) {
       setConfirmationResult(result);
       setCurrentPhoneNumber(data.phoneNumber);
       setOtpSent(true);
       toast({ title: "OTP Sent", description: `An OTP has been sent to ${data.phoneNumber}.` });
     } else {
-      toast({ title: "OTP Send Failed", description: authError?.message || "Could not send OTP. Please check the console for errors.", variant: "destructive" });
+      // AuthContext's signInWithPhone will set authError
+      toast({ title: "OTP Send Failed", description: authError?.message || "Could not send OTP. Check console and ensure reCAPTCHA works.", variant: "destructive" });
+       // If captcha check failed, Firebase might have invalidated the verifier.
+      // Clearing it might help for a retry.
+      if (authError?.code === 'auth/captcha-check-failed' || authError?.code === 'auth/invalid-verification-id') {
+        if (verifierRef.current) {
+            console.log("LoginForm handleSendOtp: Clearing verifier due to auth error:", authError.code);
+            verifierRef.current.clear();
+            verifierRef.current = null; // Allows re-initialization on next effect run or attempt
+        }
+      }
     }
   };
 
@@ -140,11 +212,11 @@ export function LoginForm() {
   const toggleFormMode = () => {
     setIsSignUp(!isSignUp);
     emailForm.reset(isSignUp ? { email: "", password: "" } : { email: "", password: "", confirmPassword: "", optionalPhoneNumber: "" });
-    if (authMethod === "phone") {
-        phoneForm.reset();
-        otpForm.reset();
-        setOtpSent(false);
-    }
+    // if (authMethod === "phone") { // Resetting phone forms when toggling email sign-in/up mode is not necessary
+    //     phoneForm.reset();
+    //     otpForm.reset();
+    //     setOtpSent(false);
+    // }
   };
 
   const handleForgotPassword = async () => {
@@ -194,10 +266,7 @@ export function LoginForm() {
             phoneForm.reset(); 
             otpForm.reset();
             setOtpSent(false);
-            if (newAuthMethod === 'phone' && recaptchaContainerRef.current && !window.recaptchaVerifierInstance) {
-              console.log("LoginForm Tabs onValueChange: Attempting to initialize reCAPTCHA for phone tab.");
-              initializeRecaptcha('recaptcha-container');
-            }
+            // reCAPTCHA initialization is now handled by useEffect based on authMethod
           }} className="w-full">
             <TabsList className="grid w-full grid-cols-2">
               <TabsTrigger value="email">Email/Password</TabsTrigger>
@@ -218,7 +287,7 @@ export function LoginForm() {
                 
                 {isSignUp && (
                   <div className="space-y-2">
-                    <Label htmlFor="optionalPhoneNumber">Phone Number (Optional)</Label>
+                    <Label htmlFor="optionalPhoneNumber">Phone Number (Optional for Email Sign Up)</Label>
                     <Input id="optionalPhoneNumber" type="tel" placeholder="e.g., +1 555 123 4567" {...emailForm.register("optionalPhoneNumber" as any)} />
                     {emailForm.formState.errors.optionalPhoneNumber && <p className="text-sm text-destructive">{(emailForm.formState.errors.optionalPhoneNumber as any).message}</p>}
                   </div>
@@ -296,7 +365,7 @@ export function LoginForm() {
                 <AlertDescription>{authError.message}</AlertDescription>
               </Alert>}
               
-              {/* This div must be present in the DOM for reCAPTCHA. Firebase manages its visibility for invisible reCAPTCHA. */}
+              {/* This div MUST be present and stable in the DOM for reCAPTCHA when phone tab is active. */}
               <div id="recaptcha-container" ref={recaptchaContainerRef} className="my-4"></div>
 
               {!otpSent ? (
@@ -325,7 +394,19 @@ export function LoginForm() {
                     {loading ? <Loader size={20} className="mr-2" /> : <KeyRound className="mr-2"/>}
                     {loading ? "Verifying OTP..." : "Verify OTP & Sign In/Up"}
                   </Button>
-                  <Button variant="link" onClick={() => { setOtpSent(false); phoneForm.reset(); otpForm.reset(); }} className="text-sm w-full">
+                  <Button variant="link" onClick={() => { 
+                      setOtpSent(false); 
+                      phoneForm.reset(); 
+                      otpForm.reset(); 
+                      // Verifier might need to be explicitly cleared or re-rendered if user wants to change number or resend OTP after an error
+                      if(verifierRef.current) {
+                        verifierRef.current.clear();
+                        verifierRef.current = null; // This will trigger re-initialization by useEffect if needed
+                      }
+                    }} 
+                    className="text-sm w-full"
+                    disabled={loading}
+                  >
                     Change phone number or resend OTP
                   </Button>
                 </form>
