@@ -92,14 +92,15 @@ export function LoginForm() {
         console.log("LoginForm useEffect: Attempting to initialize reCAPTCHA because it's not on window and phone tab is active.");
         initializeRecaptcha('recaptcha-container');
     }
-    // Cleanup reCAPTCHA if switching away from phone tab and instance exists (optional, Firebase might handle this)
+    // Optional: Cleanup reCAPTCHA if switching away from phone tab.
     // return () => {
-    //   if (authMethod !== 'phone' && window.recaptchaVerifierInstance) {
-    //     // console.log("LoginForm useEffect: Cleaning up reCAPTCHA.");
-    //     // window.recaptchaVerifierInstance.clear(); // This might be needed if issues occur on re-init
+    //   if (window.recaptchaVerifierInstance && authMethod !== 'phone') {
+    //     window.recaptchaVerifierInstance.clear();
+    //     window.recaptchaVerifierInstance = undefined; // Or handle this in AuthContext
+    //     console.log("LoginForm: Cleared reCAPTCHA on tab switch from phone.");
     //   }
     // };
-  }, [authMethod, initializeRecaptcha, recaptchaContainerRef]);
+  }, [authMethod, initializeRecaptcha]); // Removed recaptchaContainerRef as it's stable
 
 
   const handleEmailSubmit: SubmitHandler<any> = async (data) => {
@@ -112,10 +113,9 @@ export function LoginForm() {
   };
   
   const handleSendOtp: SubmitHandler<PhoneFormValues> = async (data) => {
-    // Fallback initialization attempt, though useEffect should ideally handle it.
     if (authMethod === "phone" && recaptchaContainerRef.current && !window.recaptchaVerifierInstance) {
         console.warn("handleSendOtp: Attempting to initialize reCAPTCHA as it seems not ready. This is a fallback.");
-        initializeRecaptcha('recaptcha-container');
+        initializeRecaptcha('recaptcha-container'); // Ensure it's initialized if useEffect didn't catch it
     }
 
     const result = await signInWithPhone(data.phoneNumber);
@@ -125,7 +125,6 @@ export function LoginForm() {
       setOtpSent(true);
       toast({ title: "OTP Sent", description: `An OTP has been sent to ${data.phoneNumber}.` });
     } else {
-      // Error toast is handled by AuthContext or a specific toast here if preferred
       toast({ title: "OTP Send Failed", description: authError?.message || "Could not send OTP. Please check the console for errors.", variant: "destructive" });
     }
   };
@@ -141,7 +140,6 @@ export function LoginForm() {
   const toggleFormMode = () => {
     setIsSignUp(!isSignUp);
     emailForm.reset(isSignUp ? { email: "", password: "" } : { email: "", password: "", confirmPassword: "", optionalPhoneNumber: "" });
-    // Reset phone/OTP states if switching email form mode
     if (authMethod === "phone") {
         phoneForm.reset();
         otpForm.reset();
@@ -189,12 +187,17 @@ export function LoginForm() {
         </CardHeader>
         <CardContent>
           <Tabs value={authMethod} onValueChange={(value) => {
-            setAuthMethod(value as "email" | "phone");
+            const newAuthMethod = value as "email" | "phone";
+            setAuthMethod(newAuthMethod);
             setIsSignUp(false); 
             emailForm.reset(); 
             phoneForm.reset(); 
             otpForm.reset();
             setOtpSent(false);
+            if (newAuthMethod === 'phone' && recaptchaContainerRef.current && !window.recaptchaVerifierInstance) {
+              console.log("LoginForm Tabs onValueChange: Attempting to initialize reCAPTCHA for phone tab.");
+              initializeRecaptcha('recaptcha-container');
+            }
           }} className="w-full">
             <TabsList className="grid w-full grid-cols-2">
               <TabsTrigger value="email">Email/Password</TabsTrigger>
@@ -292,6 +295,10 @@ export function LoginForm() {
                 <AlertTitle>Authentication Error</AlertTitle>
                 <AlertDescription>{authError.message}</AlertDescription>
               </Alert>}
+              
+              {/* This div must be present in the DOM for reCAPTCHA. Firebase manages its visibility for invisible reCAPTCHA. */}
+              <div id="recaptcha-container" ref={recaptchaContainerRef} className="my-4"></div>
+
               {!otpSent ? (
                 <form onSubmit={phoneForm.handleSubmit(handleSendOtp)} className="space-y-6">
                   <div className="space-y-2">
@@ -299,8 +306,6 @@ export function LoginForm() {
                     <Input id="phoneNumber" type="tel" placeholder="+11234567890" {...phoneForm.register("phoneNumber")} />
                     {phoneForm.formState.errors.phoneNumber && <p className="text-sm text-destructive">{phoneForm.formState.errors.phoneNumber.message}</p>}
                   </div>
-                  {/* This div is where Firebase will render the reCAPTCHA widget (might be invisible) */}
-                  <div id="recaptcha-container" ref={recaptchaContainerRef} className="my-4"></div>
                   <Button type="submit" className="w-full" disabled={loading}>
                     {loading ? <Loader size={20} className="mr-2" /> : <PhoneIcon className="mr-2"/>}
                     {loading ? "Sending OTP..." : "Send OTP"}
