@@ -21,9 +21,7 @@ const nextConfig: NextConfig = {
       },
     ],
   },
-  devIndicators: {
-    buildActivity: false, // This disables the build activity indicator
-  },
+  devIndicators: false, // Attempt to disable all development indicators
 };
 
 export default nextConfig;
