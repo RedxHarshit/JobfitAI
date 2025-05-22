@@ -6,6 +6,9 @@ import { ArrowLeft, LifeBuoy, BookOpen, Mail } from "lucide-react";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 
 export default function HelpPage() {
+  const supportEmail = "harshit14012018@gmail.com";
+  const gmailComposeUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${supportEmail}`;
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -76,9 +79,9 @@ export default function HelpPage() {
                   Can't find an answer? Reach out to our support team.
                 </p>
                 <Button asChild variant="outline">
-                  <Link href="mailto:harshit14012018@gmail.com">
-                    <Mail className="mr-2 h-4 w-4" /> Email Support
-                  </Link>
+                  <a href={gmailComposeUrl} target="_blank" rel="noopener noreferrer">
+                    <Mail className="mr-2 h-4 w-4" /> Email Support via Gmail
+                  </a>
                 </Button>
               </CardContent>
             </Card>
