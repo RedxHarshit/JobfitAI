@@ -2,8 +2,8 @@
 // src/contexts/AuthContext.tsx
 "use client";
 
-import type { User as FirebaseUser, AuthError, ConfirmationResult, RecaptchaVerifier } from "firebase/auth";
-import { createContext, useContext, useEffect, useState, ReactNode, useCallback } from "react";
+import type { User as FirebaseUser, AuthError } from "firebase/auth";
+import { createContext, useContext, useEffect, useState, ReactNode } from "react";
 import { auth } from "@/lib/firebase";
 import { 
   onAuthStateChanged, 
@@ -11,19 +11,20 @@ import {
   createUserWithEmailAndPassword, 
   signInWithEmailAndPassword,
   sendPasswordResetEmail,
-  // RecaptchaVerifier, // No longer creating it here
-  signInWithPhoneNumber,
-  sendEmailVerification,
+  sendEmailVerification as firebaseSendEmailVerification, // Renamed import
 } from "firebase/auth";
-import type { EmailSignUpFormValues as BaseEmailSignUpFormValues, EmailLoginFormValues } from "@/components/auth/LoginForm";
+import type { EmailLoginFormValues as BaseEmailLoginFormValues, EmailSignUpFormValues as BaseEmailSignUpFormValues } from "@/components/auth/LoginForm";
 
-export interface SignUpFormValues extends BaseEmailSignUpFormValues {
-  phone?: string; 
+// Ensure SignUpFormValues matches the simplified form (email/password only)
+export interface SignUpFormValues extends Omit<BaseEmailSignUpFormValues, 'confirmPassword'> {
+  // No phone number here anymore
 }
+export type EmailLoginFormValues = BaseEmailLoginFormValues;
+
 
 interface AuthContextType {
   user: FirebaseUser | null;
-  auth: typeof auth | null; // Expose auth for direct use if needed by components like LoginForm for reCAPTCHA
+  auth: typeof auth | null;
   loading: boolean;
   error: AuthError | null;
   signUp: (values: SignUpFormValues) => Promise<FirebaseUser | null>;
@@ -31,9 +32,6 @@ interface AuthContextType {
   signOut: () => Promise<void>;
   sendPasswordReset: (email: string) => Promise<boolean>;
   sendVerificationEmail: (user: FirebaseUser) => Promise<boolean>;
-  signInWithPhone: (phoneNumber: string, appVerifier: RecaptchaVerifier) => Promise<ConfirmationResult | null>; 
-  confirmPhoneOtp: (confirmationResult: ConfirmationResult, otp: string) => Promise<FirebaseUser | null>; 
-  // initializeRecaptcha is removed
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -42,7 +40,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<AuthError | null>(null);
-  // recaptchaVerifier state is removed
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
@@ -52,18 +49,18 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     return () => unsubscribe();
   }, []);
 
-  // initializeRecaptcha method is removed
-
   const sendVerificationEmail = async (fbUser: FirebaseUser): Promise<boolean> => {
     if (!auth || !fbUser) {
-      setError({code: "auth/internal-error", message: "User not available for email verification."} as AuthError);
+      console.error("AuthContext: User or auth not available for email verification.");
       return false;
     }
     try {
-      await sendEmailVerification(fbUser);
+      await firebaseSendEmailVerification(fbUser);
+      console.log("AuthContext: Verification email sent to", fbUser.email);
       return true;
     } catch (err) {
-      setError(err as AuthError);
+      console.error("AuthContext: Error sending verification email:", err);
+      // Don't set global error here as it might conflict with signUp's error state
       return false;
     }
   };
@@ -74,7 +71,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     try {
       if (!auth) throw new Error("Firebase Auth not initialized.");
       const userCredential = await createUserWithEmailAndPassword(auth, values.email, values.password);
-      await sendVerificationEmail(userCredential.user);
+      // Send verification email for the new user
+      if (userCredential.user) {
+        await sendVerificationEmail(userCredential.user);
+      }
       setUser(userCredential.user);
       return userCredential.user;
     } catch (err) {
@@ -130,75 +130,17 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
-  const signInWithPhone = async (phoneNumber: string, appVerifier: RecaptchaVerifier): Promise<ConfirmationResult | null> => {
-    setLoading(true);
-    setError(null);
-    console.log("AuthContext: signInWithPhone called for", phoneNumber);
-
-    if (!auth) {
-      console.error("AuthContext: Firebase auth not initialized for signInWithPhone");
-      setError({code: "auth/internal-error", message:"Firebase auth not initialized"} as AuthError);
-      setLoading(false);
-      return null;
-    }
-    
-    if (!appVerifier) {
-      console.error("AuthContext: App verifier (reCAPTCHA) is null in signInWithPhone.");
-      setError({code: "auth/captcha-check-failed", message:"reCAPTCHA verifier not provided to signInWithPhone."} as AuthError);
-      setLoading(false);
-      return null;
-    }
-
-    try {
-      console.log("AuthContext: Attempting signInWithPhoneNumber with Firebase...");
-      const confirmation = await signInWithPhoneNumber(auth, phoneNumber, appVerifier);
-      console.log("AuthContext: signInWithPhoneNumber successful, confirmation result received.");
-      return confirmation;
-    } catch (err: any) {
-      console.error("AuthContext: Error during signInWithPhoneNumber:", err);
-      setError(err as AuthError);
-      // If reCAPTCHA related errors occur, the calling component (LoginForm) might need to handle re-rendering the verifier.
-      // For 'auth/captcha-check-failed' or specific reCAPTCHA errors, it might be useful to advise re-trying.
-      if (err.code === 'auth/captcha-check-failed' && appVerifier.render) {
-         console.warn("AuthContext: Attempting to reset reCAPTCHA due to error:", err.code);
-         // It's generally better to handle re-render/reset in the component owning the verifier.
-         // Calling appVerifier.render() here might still face issues if the element is gone.
-      }
-      return null;
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const confirmPhoneOtp = async (confirmationResult: ConfirmationResult, otp: string): Promise<FirebaseUser | null> => {
-    setLoading(true);
-    setError(null);
-    try {
-      const userCredential = await confirmationResult.confirm(otp);
-      setUser(userCredential.user);
-      return userCredential.user;
-    } catch (err) {
-      setError(err as AuthError);
-      return null;
-    } finally {
-      setLoading(false);
-    }
-  };
-
   return (
     <AuthContext.Provider value={{ 
       user, 
-      auth, // Expose auth instance
+      auth,
       loading, 
       error, 
       signUp, 
       signIn, 
       signOut, 
-      sendPasswordReset, 
-      sendVerificationEmail,
-      signInWithPhone, 
-      confirmPhoneOtp,
-      // initializeRecaptcha removed
+      sendPasswordReset,
+      sendVerificationEmail, // Expose if needed, though signUp calls it internally
     }}>
       {children}
     </AuthContext.Provider>
@@ -212,11 +154,3 @@ export const useAuth = (): AuthContextType => {
   }
   return context;
 };
-
-// window.recaptchaVerifierInstance is no longer managed by AuthContext
-// declare global {
-//   interface Window {
-//     recaptchaVerifierInstance?: RecaptchaVerifier;
-//     grecaptcha?: any; 
-//   }
-// }

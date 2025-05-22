@@ -16,11 +16,13 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Eye, EyeOff, LogIn, UserPlus } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
+// Schema for Email/Password Login
 const emailLoginSchema = z.object({
   email: z.string().email({ message: "Invalid email address" }),
   password: z.string().min(6, { message: "Password must be at least 6 characters" }),
 });
 
+// Schema for Email/Password Sign Up
 const emailSignUpSchema = z.object({
   email: z.string().email({ message: "Invalid email address" }),
   password: z.string().min(6, { message: "Password must be at least 6 characters" }),
@@ -31,7 +33,7 @@ const emailSignUpSchema = z.object({
 });
 
 export type EmailLoginFormValues = z.infer<typeof emailLoginSchema>;
-export type EmailSignUpFormValues = Omit<z.infer<typeof emailSignUpSchema>, 'confirmPassword'>;
+export type EmailSignUpFormValues = z.infer<typeof emailSignUpSchema>;
 
 
 export function LoginForm() {
@@ -48,24 +50,42 @@ export function LoginForm() {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   
-
-  const emailForm = useForm<z.infer<typeof emailLoginSchema> | z.infer<typeof emailSignUpSchema>>({
-    resolver: zodResolver(isSignUp ? emailSignUpSchema : emailLoginSchema),
-    defaultValues: isSignUp ? { email: "", password: "", confirmPassword: "" } : { email: "", password: "" },
+  const currentSchema = isSignUp ? emailSignUpSchema : emailLoginSchema;
+  const form = useForm<z.infer<typeof currentSchema>>({
+    resolver: zodResolver(currentSchema),
+    defaultValues: {
+      email: "",
+      password: "",
+      ...(isSignUp && { confirmPassword: "" }),
+    },
   });
   
   useEffect(() => {
-    // Reset form when switching between Sign In and Sign Up
-    emailForm.reset(isSignUp ? { email: "", password: "", confirmPassword: "" } : { email: "", password: "" });
-  }, [isSignUp, emailForm]);
+    form.reset({
+      email: "",
+      password: "",
+      ...(isSignUp && { confirmPassword: "" }),
+    });
+    setShowPassword(false);
+    setShowConfirmPassword(false);
+  }, [isSignUp, form]);
 
 
-  const handleEmailSubmit: SubmitHandler<any> = async (data) => {
+  const handleEmailSubmit: SubmitHandler<z.infer<typeof currentSchema>> = async (data) => {
     if (isSignUp) {
-      const { email, password } = data as z.infer<typeof emailSignUpSchema>;
-      await signUp({ email, password });
+      const { email, password } = data as EmailSignUpFormValues;
+      const newUser = await signUp({ email, password });
+      if (newUser) {
+        toast({
+          title: "Account Created!",
+          description: "Please check your email to verify your account.",
+        });
+        // Redirect is handled by useEffect in parent page (LoginPage/HomePage) based on user state
+      } 
+      // If newUser is null, authError will be set in AuthContext and displayed by the Alert component
     } else {
       await signIn(data as EmailLoginFormValues);
+      // Errors/redirects handled similarly
     }
   };
   
@@ -74,8 +94,8 @@ export function LoginForm() {
   };
 
   const handleForgotPassword = async () => {
-    const email = emailForm.getValues("email");
-    if (!email || emailForm.formState.errors.email) {
+    const email = form.getValues("email");
+    if (!email || form.formState.errors.email) {
       toast({
         title: "Email Required",
         description: "Please enter your email address to reset your password.",
@@ -114,11 +134,12 @@ export function LoginForm() {
             <AlertTitle>Authentication Error</AlertTitle>
             <AlertDescription>{authError.message}</AlertDescription>
             </Alert>}
-            <form onSubmit={emailForm.handleSubmit(handleEmailSubmit)} className="space-y-6">
+            
+            <form onSubmit={form.handleSubmit(handleEmailSubmit)} className="space-y-6">
             <div className="space-y-2">
                 <Label htmlFor="email-auth">Email</Label>
-                <Input id="email-auth" type="email" placeholder="you@example.com" {...emailForm.register("email")} />
-                {emailForm.formState.errors.email && <p className="text-sm text-destructive">{(emailForm.formState.errors.email as any).message}</p>}
+                <Input id="email-auth" type="email" placeholder="you@example.com" {...form.register("email")} />
+                {form.formState.errors.email && <p className="text-sm text-destructive">{(form.formState.errors.email as any).message}</p>}
             </div>
             
             <div className="space-y-2 relative">
@@ -140,7 +161,7 @@ export function LoginForm() {
                 id="password-auth" 
                 type={showPassword ? "text" : "password"} 
                 placeholder="••••••••" 
-                {...emailForm.register("password")} 
+                {...form.register("password")} 
                 />
                 <Button 
                 type="button" 
@@ -148,10 +169,11 @@ export function LoginForm() {
                 size="icon" 
                 className="absolute right-2 top-7 h-7 w-7"
                 onClick={() => setShowPassword(!showPassword)}
+                aria-label={showPassword ? "Hide password" : "Show password"}
                 >
                 {showPassword ? <EyeOff size={18}/> : <Eye size={18}/>}
                 </Button>
-                {emailForm.formState.errors.password && <p className="text-sm text-destructive">{(emailForm.formState.errors.password as any).message}</p>}
+                {form.formState.errors.password && <p className="text-sm text-destructive">{(form.formState.errors.password as any).message}</p>}
             </div>
 
             {isSignUp && (
@@ -161,7 +183,7 @@ export function LoginForm() {
                     id="confirmPassword" 
                     type={showConfirmPassword ? "text" : "password"}
                     placeholder="••••••••" 
-                    {...emailForm.register("confirmPassword" as any)} 
+                    {...form.register("confirmPassword" as any)} 
                 />
                 <Button 
                     type="button" 
@@ -169,14 +191,15 @@ export function LoginForm() {
                     size="icon" 
                     className="absolute right-2 top-7 h-7 w-7"
                     onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                    aria-label={showConfirmPassword ? "Hide confirm password" : "Show confirm password"}
                 >
                     {showConfirmPassword ? <EyeOff size={18}/> : <Eye size={18}/>}
                 </Button>
-                {emailForm.formState.errors.confirmPassword && <p className="text-sm text-destructive">{(emailForm.formState.errors.confirmPassword as any).message}</p>}
+                {form.formState.errors.confirmPassword && <p className="text-sm text-destructive">{(form.formState.errors.confirmPassword as any).message}</p>}
                 </div>
             )}
             <Button type="submit" className="w-full" disabled={loading}>
-                {loading ? <Loader size={20} className="mr-2" /> : (isSignUp ? <UserPlus className="mr-2"/> : <LogIn className="mr-2"/>)}
+                {loading ? <Loader size={20} className="mr-2" /> : (isSignUp ? <UserPlus className="mr-2 h-5 w-5"/> : <LogIn className="mr-2 h-5 w-5"/>)}
                 {loading ? (isSignUp ? "Creating Account..." : "Signing In...") : (isSignUp ? "Sign Up" : "Sign In")}
             </Button>
             <div className="text-center">
