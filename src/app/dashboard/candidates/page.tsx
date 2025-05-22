@@ -1,3 +1,4 @@
+
 // src/app/dashboard/candidates/page.tsx
 "use client";
 
@@ -5,13 +6,50 @@ import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { useAppContext } from '@/contexts/AppContext';
-import { Users, UserPlus, Eye, FileText, Mail, Phone } from 'lucide-react';
+import { Users, UserPlus, Eye, FileText, Mail, Phone, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import Image from 'next/image';
 import { Loader } from '@/components/ui/loader';
+import { useToast } from '@/hooks/use-toast';
+import { useState } from 'react';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import type { Candidate } from '@/types';
+
 
 export default function CandidatesPage() {
-  const { candidates, loadingData } = useAppContext();
+  const { candidates, loadingData, deleteCandidate } = useAppContext();
+  const { toast } = useToast();
+  const [candidateToDelete, setCandidateToDelete] = useState<Candidate | null>(null);
+
+  const handleDeleteConfirm = async () => {
+    if (!candidateToDelete) return;
+
+    const success = await deleteCandidate(candidateToDelete.id);
+    if (success) {
+      toast({
+        title: "Candidate Deleted",
+        description: `${candidateToDelete.candidateName || "Candidate"} has been removed.`,
+      });
+    } else {
+      toast({
+        title: "Deletion Failed",
+        description: "Could not delete candidate. Please try again.",
+        variant: "destructive",
+      });
+    }
+    setCandidateToDelete(null); // Close dialog
+  };
+
 
   if (loadingData) {
     return (
@@ -91,25 +129,56 @@ export default function CandidatesPage() {
                 <div>
                   <h4 className="font-semibold text-sm mb-1">Top Skills:</h4>
                   <div className="flex flex-wrap gap-1">
-                    {candidate.skills.slice(0, 5).map((skill, index) => (
+                    {(candidate.skills || []).slice(0, 5).map((skill, index) => (
                       <Badge key={index} variant="secondary">{skill}</Badge>
                     ))}
-                    {candidate.skills.length > 5 && <Badge variant="outline">+{candidate.skills.length - 5} more</Badge>}
-                    {candidate.skills.length === 0 && <span className="text-xs text-muted-foreground">No skills listed.</span>}
+                    {(candidate.skills || []).length > 5 && <Badge variant="outline">+{candidate.skills.length - 5} more</Badge>}
+                    {(candidate.skills || []).length === 0 && <span className="text-xs text-muted-foreground">No skills listed.</span>}
                   </div>
                 </div>
               </CardContent>
-              <CardFooter>
-                <Button asChild variant="outline" className="w-full">
+              <CardFooter className="flex justify-between items-center gap-2">
+                <Button asChild variant="outline" className="flex-grow">
                   <Link href={`/dashboard/candidates/${candidate.id}`}>
                     <Eye className="mr-2 h-4 w-4" /> View Profile
                   </Link>
                 </Button>
+                <AlertDialogTrigger asChild>
+                   <Button 
+                      variant="destructive" 
+                      size="icon" 
+                      onClick={() => setCandidateToDelete(candidate)}
+                      aria-label="Delete candidate"
+                    >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </AlertDialogTrigger>
               </CardFooter>
             </Card>
           ))}
         </div>
       )}
+       {candidateToDelete && (
+        <AlertDialog open={!!candidateToDelete} onOpenChange={(open) => !open && setCandidateToDelete(null)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This action cannot be undone. This will permanently delete the candidate
+                profile for {candidateToDelete.candidateName || "this candidate"}.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel onClick={() => setCandidateToDelete(null)}>Cancel</AlertDialogCancel>
+              <AlertDialogAction onClick={handleDeleteConfirm} className="bg-destructive hover:bg-destructive/90">
+                Yes, delete candidate
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      )}
     </div>
   );
 }
+
+    

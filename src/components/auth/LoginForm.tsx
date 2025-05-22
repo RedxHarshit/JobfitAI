@@ -1,3 +1,4 @@
+
 // src/components/auth/LoginForm.tsx
 "use client";
 
@@ -12,7 +13,8 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { useAuth } from "@/contexts/AuthContext";
 import { Loader } from "@/components/ui/loader";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Eye, EyeOff, LogIn, UserPlus } from "lucide-react";
+import { Eye, EyeOff, LogIn, UserPlus, MailQuestion } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 
 const loginSchema = z.object({
   email: z.string().email({ message: "Invalid email address" }),
@@ -21,6 +23,7 @@ const loginSchema = z.object({
 
 const signUpSchema = z.object({
   email: z.string().email({ message: "Invalid email address" }),
+  phone: z.string().optional().describe("Optional phone number for the user."), // Added phone
   password: z.string().min(6, { message: "Password must be at least 6 characters" }),
   confirmPassword: z.string().min(6, { message: "Password must be at least 6 characters" }),
 }).refine((data) => data.password === data.confirmPassword, {
@@ -34,35 +37,60 @@ export type SignUpFormValues = Omit<z.infer<typeof signUpSchema>, 'confirmPasswo
 
 
 export function LoginForm() {
-  const { signIn, signUp, error: authError, loading } = useAuth();
+  const { signIn, signUp, sendPasswordReset, error: authError, loading } = useAuth();
   const [isSignUp, setIsSignUp] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const { toast } = useToast();
 
 
   const currentSchema = isSignUp ? signUpSchema : loginSchema;
   type CurrentFormValues = z.infer<typeof currentSchema>;
 
-  const { register, handleSubmit, formState: { errors }, reset } = useForm<CurrentFormValues>({
+  const { register, handleSubmit, formState: { errors }, reset, getValues } = useForm<CurrentFormValues>({
     resolver: zodResolver(currentSchema),
   });
 
   const onSubmit: SubmitHandler<CurrentFormValues> = async (data) => {
     if (isSignUp) {
-      // We know data confirms to signUpSchema here due to resolver logic
-      const { email, password } = data as z.infer<typeof signUpSchema>;
-      await signUp({ email, password });
+      const { email, password, phone } = data as z.infer<typeof signUpSchema>;
+      await signUp({ email, password, phone });
     } else {
-       // We know data confirms to loginSchema here
       await signIn(data as LoginFormValues);
     }
-    // Reset is handled by redirection or error display
   };
   
   const toggleFormMode = () => {
     setIsSignUp(!isSignUp);
-    reset(); // Reset form fields and errors when switching modes
+    reset(); 
   };
+
+  const handleForgotPassword = async () => {
+    const email = getValues("email");
+    if (!email || errors.email) {
+      toast({
+        title: "Email Required",
+        description: "Please enter your email address to reset your password.",
+        variant: "destructive",
+      });
+      return;
+    }
+    const success = await sendPasswordReset(email);
+    if (success) {
+      toast({
+        title: "Password Reset Email Sent",
+        description: "Check your email for instructions to reset your password.",
+      });
+    } else {
+      // AuthContext will set authError, which is displayed
+       toast({
+        title: "Error Sending Reset Email",
+        description: authError?.message || "Could not send password reset email. Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
+
 
   return (
     <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-background to-secondary/30 p-4">
@@ -86,10 +114,32 @@ export function LoginForm() {
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
               <Input id="email" type="email" placeholder="you@example.com" {...register("email")} />
-              {errors.email && <p className="text-sm text-destructive">{errors.email.message}</p>}
+              {errors.email && <p className="text-sm text-destructive">{(errors.email as any).message}</p>}
             </div>
+            
+            {isSignUp && (
+              <div className="space-y-2">
+                <Label htmlFor="phone">Phone Number (Optional)</Label>
+                <Input id="phone" type="tel" placeholder="e.g., +1 555 123 4567" {...register("phone")} />
+                {errors.phone && <p className="text-sm text-destructive">{(errors.phone as any).message}</p>}
+              </div>
+            )}
+
             <div className="space-y-2 relative">
-              <Label htmlFor="password">Password</Label>
+              <div className="flex items-center justify-between">
+                <Label htmlFor="password">Password</Label>
+                {!isSignUp && (
+                  <Button
+                    type="button"
+                    variant="link"
+                    className="text-xs h-auto p-0 text-primary"
+                    onClick={handleForgotPassword}
+                    disabled={loading}
+                  >
+                    Forgot Password?
+                  </Button>
+                )}
+              </div>
               <Input 
                 id="password" 
                 type={showPassword ? "text" : "password"} 
@@ -105,8 +155,9 @@ export function LoginForm() {
               >
                 {showPassword ? <EyeOff size={18}/> : <Eye size={18}/>}
               </Button>
-              {errors.password && <p className="text-sm text-destructive">{errors.password.message}</p>}
+              {errors.password && <p className="text-sm text-destructive">{(errors.password as any).message}</p>}
             </div>
+
             {isSignUp && (
               <div className="space-y-2 relative">
                 <Label htmlFor="confirmPassword">Confirm Password</Label>
@@ -125,7 +176,7 @@ export function LoginForm() {
                 >
                   {showConfirmPassword ? <EyeOff size={18}/> : <Eye size={18}/>}
                 </Button>
-                {errors.confirmPassword && <p className="text-sm text-destructive">{errors.confirmPassword.message}</p>}
+                {errors.confirmPassword && <p className="text-sm text-destructive">{(errors.confirmPassword as any).message}</p>}
               </div>
             )}
             <Button type="submit" className="w-full" disabled={loading}>
@@ -143,3 +194,5 @@ export function LoginForm() {
     </div>
   );
 }
+
+    

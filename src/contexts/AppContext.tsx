@@ -1,7 +1,8 @@
+
 // src/contexts/AppContext.tsx
 "use client";
 
-import type { Candidate, Job } from "@/types";
+import type { Candidate, Job, InterviewQuestionCategory } from "@/types";
 import { createContext, useContext, useState, ReactNode, useEffect, useCallback } from "react";
 import { db } from "@/lib/firebase";
 import {
@@ -10,12 +11,13 @@ import {
   getDocs,
   doc,
   updateDoc,
+  deleteDoc, // Added for delete functionality
   Timestamp,
   query,
   where,
-  writeBatch,
+  // writeBatch, // Not currently used, can be removed if not planned
 } from "firebase/firestore";
-import { useAuth } from "./AuthContext"; // To associate data with users
+import { useAuth } from "./AuthContext"; 
 
 interface AppContextType {
   candidates: Candidate[];
@@ -23,6 +25,7 @@ interface AppContextType {
   addCandidate: (candidateData: Omit<Candidate, "id" | "userId">) => Promise<Candidate | null>;
   addJob: (jobData: Omit<Job, "id" | "userId" | "createdAt">) => Promise<Job | null>;
   updateCandidate: (candidate: Candidate) => Promise<void>;
+  deleteCandidate: (candidateId: string) => Promise<boolean>; // Added for delete
   getCandidateById: (id: string) => Candidate | undefined;
   getJobById: (id: string) => Job | undefined;
   loadingData: boolean;
@@ -31,7 +34,7 @@ interface AppContextType {
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider = ({ children }: { children: ReactNode }) => {
-  const { user } = useAuth(); // Get current authenticated user
+  const { user } = useAuth(); 
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loadingData, setLoadingData] = useState(true);
@@ -39,25 +42,33 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const fetchData = useCallback(async (currentUserId: string) => {
     setLoadingData(true);
     try {
-      // Fetch Candidates
       const candidatesQuery = query(collection(db, "candidates"), where("userId", "==", currentUserId));
       const candidatesSnapshot = await getDocs(candidatesQuery);
       const fetchedCandidates: Candidate[] = candidatesSnapshot.docs.map(docSnapshot => {
         const data = docSnapshot.data();
         return {
           id: docSnapshot.id,
-          ...data,
-          // Ensure nested objects like matchData are correctly typed if necessary
+          candidateName: data.candidateName || "N/A",
+          email: data.email,
+          phone: data.phone,
+          skills: Array.isArray(data.skills) ? data.skills : [],
+          experience: Array.isArray(data.experience) ? data.experience : [],
+          education: Array.isArray(data.education) ? data.education : [],
+          resumeFileName: data.resumeFileName,
+          parsedText: data.parsedText,
           matchData: data.matchData ? {
             ...data.matchData,
-            jobId: data.matchData.jobId || null, // handle if jobId is not present
+            jobId: data.matchData.jobId || null,
           } : undefined,
-          interviewQuestions: data.interviewQuestions || [],
+          interviewQuestions: Array.isArray(data.interviewQuestions) && 
+                              data.interviewQuestions.every((item: any) => typeof item === 'object' && item.category && Array.isArray(item.questions)) 
+                              ? data.interviewQuestions 
+                              : [], // Ensure correct type or default
+          userId: data.userId,
         } as Candidate;
       });
       setCandidates(fetchedCandidates);
 
-      // Fetch Jobs
       const jobsQuery = query(collection(db, "jobs"), where("userId", "==", currentUserId));
       const jobsSnapshot = await getDocs(jobsQuery);
       const fetchedJobs: Job[] = jobsSnapshot.docs.map(docSnapshot => {
@@ -66,7 +77,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
           id: docSnapshot.id,
           title: data.title,
           description: data.description,
-          createdAt: (data.createdAt as Timestamp).toDate(), // Convert Firestore Timestamp to Date
+          createdAt: (data.createdAt as Timestamp).toDate(), 
           userId: data.userId,
         } as Job;
       });
@@ -74,7 +85,6 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
     } catch (error) {
       console.error("Error fetching data from Firestore:", error);
-      // Optionally set an error state here
     } finally {
       setLoadingData(false);
     }
@@ -84,7 +94,6 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     if (user) {
       fetchData(user.uid);
     } else {
-      // Clear data if user logs out
       setCandidates([]);
       setJobs([]);
       setLoadingData(false);
@@ -92,16 +101,18 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   }, [user, fetchData]);
 
   const addCandidate = async (candidateData: Omit<Candidate, "id" | "userId">): Promise<Candidate | null> => {
-    if (!user) {
-      console.error("User not authenticated to add candidate");
+    if (!user || !db) {
+      console.error("User not authenticated or DB not initialized to add candidate");
       return null;
     }
     try {
-      const docRef = await addDoc(collection(db, "candidates"), {
+      const dataToSave = {
         ...candidateData,
-        userId: user.uid, // Associate candidate with the current user
-      });
-      const newCandidate: Candidate = { ...candidateData, id: docRef.id, userId: user.uid };
+        userId: user.uid,
+        interviewQuestions: candidateData.interviewQuestions || [], // ensure default if undefined
+      };
+      const docRef = await addDoc(collection(db, "candidates"), dataToSave);
+      const newCandidate: Candidate = { ...dataToSave, id: docRef.id };
       setCandidates((prev) => [...prev, newCandidate]);
       return newCandidate;
     } catch (error) {
@@ -111,15 +122,15 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const addJob = async (jobData: Omit<Job, "id" | "userId" | "createdAt">): Promise<Job | null> => {
-    if (!user) {
-      console.error("User not authenticated to add job");
+    if (!user || !db) {
+      console.error("User not authenticated or DB not initialized to add job");
       return null;
     }
     try {
       const newJobWithTimestamp = {
         ...jobData,
         createdAt: Timestamp.fromDate(new Date()),
-        userId: user.uid, // Associate job with the current user
+        userId: user.uid, 
       };
       const docRef = await addDoc(collection(db, "jobs"), newJobWithTimestamp);
       const newJob: Job = {
@@ -138,17 +149,16 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const updateCandidate = async (updatedCandidate: Candidate) => {
-     if (!user || user.uid !== updatedCandidate.userId) {
-      console.error("User not authenticated or not authorized to update this candidate");
+     if (!user || user.uid !== updatedCandidate.userId || !db) {
+      console.error("User not authenticated, not authorized, or DB not initialized to update this candidate");
       return;
     }
     try {
       const candidateRef = doc(db, "candidates", updatedCandidate.id);
-      // Ensure we don't try to write undefined fields if they are optional in the type
-      // but should be removed if not present for Firestore.
       const dataToUpdate = { ...updatedCandidate };
-      delete (dataToUpdate as any).id; // Don't store firestore ID in the document itself
-
+      // Firestore ID should not be part of the document data itself
+      if ('id' in dataToUpdate) delete (dataToUpdate as any).id; 
+      
       await updateDoc(candidateRef, dataToUpdate);
       setCandidates((prev) =>
         prev.map(c => c.id === updatedCandidate.id ? updatedCandidate : c)
@@ -158,11 +168,33 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
+  const deleteCandidate = async (candidateId: string): Promise<boolean> => {
+    if (!user || !db) {
+      console.error("User not authenticated or DB not initialized to delete candidate");
+      return false;
+    }
+    // Optional: Add an ownership check here if needed, though Firestore rules should handle it
+    // const candidateToDelete = candidates.find(c => c.id === candidateId);
+    // if (candidateToDelete && candidateToDelete.userId !== user.uid) {
+    //   console.error("User not authorized to delete this candidate.");
+    //   return false;
+    // }
+    try {
+      const candidateRef = doc(db, "candidates", candidateId);
+      await deleteDoc(candidateRef);
+      setCandidates((prev) => prev.filter(c => c.id !== candidateId));
+      return true;
+    } catch (error) {
+      console.error("Error deleting candidate from Firestore:", error);
+      return false;
+    }
+  };
+
   const getCandidateById = (id: string) => candidates.find(c => c.id === id);
   const getJobById = (id: string) => jobs.find(j => j.id === id);
 
   return (
-    <AppContext.Provider value={{ candidates, jobs, addCandidate, addJob, updateCandidate, getCandidateById, getJobById, loadingData }}>
+    <AppContext.Provider value={{ candidates, jobs, addCandidate, addJob, updateCandidate, deleteCandidate, getCandidateById, getJobById, loadingData }}>
       {children}
     </AppContext.Provider>
   );
@@ -175,3 +207,5 @@ export const useAppContext = (): AppContextType => {
   }
   return context;
 };
+
+    

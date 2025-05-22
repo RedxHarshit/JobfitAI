@@ -1,11 +1,23 @@
+
 // src/contexts/AuthContext.tsx
 "use client";
 
 import type { User as FirebaseUser, AuthError } from "firebase/auth";
 import { createContext, useContext, useEffect, useState, ReactNode } from "react";
 import { auth } from "@/lib/firebase";
-import { onAuthStateChanged, signOut as firebaseSignOut, createUserWithEmailAndPassword, signInWithEmailAndPassword } from "firebase/auth";
-import type { SignUpFormValues, LoginFormValues } from "@/components/auth/LoginForm"; // Assuming LoginForm exports these
+import { 
+  onAuthStateChanged, 
+  signOut as firebaseSignOut, 
+  createUserWithEmailAndPassword, 
+  signInWithEmailAndPassword,
+  sendPasswordResetEmail
+} from "firebase/auth";
+import type { SignUpFormValues as BaseSignUpFormValues, LoginFormValues } from "@/components/auth/LoginForm";
+
+// Extend SignUpFormValues to include phone if it's collected, though not used by Firebase Auth directly for email/pass signup
+export interface SignUpFormValues extends BaseSignUpFormValues {
+  phone?: string;
+}
 
 interface AuthContextType {
   user: FirebaseUser | null;
@@ -14,6 +26,7 @@ interface AuthContextType {
   signUp: (values: SignUpFormValues) => Promise<FirebaseUser | null>;
   signIn: (values: LoginFormValues) => Promise<FirebaseUser | null>;
   signOut: () => Promise<void>;
+  sendPasswordReset: (email: string) => Promise<boolean>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -35,8 +48,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setLoading(true);
     setError(null);
     try {
+      // Firebase createUserWithEmailAndPassword doesn't use the phone number directly.
+      // If phone needs to be stored, it would be a separate step like updating user profile.
       const userCredential = await createUserWithEmailAndPassword(auth, values.email, values.password);
       setUser(userCredential.user);
+      // TODO: If needed, update user profile with phone number here
       return userCredential.user;
     } catch (err) {
       setError(err as AuthError);
@@ -74,8 +90,23 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
+  const sendPasswordReset = async (email: string): Promise<boolean> => {
+    setLoading(true);
+    setError(null);
+    try {
+      if (!auth) throw new Error("Firebase Auth not initialized.");
+      await sendPasswordResetEmail(auth, email);
+      setLoading(false);
+      return true;
+    } catch (err) {
+      setError(err as AuthError);
+      setLoading(false);
+      return false;
+    }
+  };
+
   return (
-    <AuthContext.Provider value={{ user, loading, error, signUp, signIn, signOut }}>
+    <AuthContext.Provider value={{ user, loading, error, signUp, signIn, signOut, sendPasswordReset }}>
       {children}
     </AuthContext.Provider>
   );
@@ -88,3 +119,5 @@ export const useAuth = (): AuthContextType => {
   }
   return context;
 };
+
+    

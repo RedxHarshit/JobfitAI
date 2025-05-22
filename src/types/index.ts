@@ -1,6 +1,12 @@
+
 // src/types/index.ts
 import type { ParseResumeOutput } from "@/ai/flows/parse-resume";
 import type { MatchCandidateToJobOutput } from "@/ai/flows/match-candidate-to-job";
+
+export interface InterviewQuestionCategory {
+  category: string;
+  questions: string[];
+}
 
 export interface Candidate extends ParseResumeOutput {
   id: string;
@@ -8,7 +14,7 @@ export interface Candidate extends ParseResumeOutput {
   resumeFileName?: string;
   parsedText?: string; // Full text of the resume if needed later
   matchData?: MatchCandidateToJobOutput & { jobId: string | null }; // jobId can be null if custom
-  interviewQuestions?: string[]; // Array of questions
+  interviewQuestions?: InterviewQuestionCategory[]; // Updated structure
 }
 
 export interface Job {
@@ -18,3 +24,5 @@ export interface Job {
   description: string;
   createdAt: Date;
 }
+
+    
