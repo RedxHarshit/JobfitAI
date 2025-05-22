@@ -63,13 +63,14 @@ export default function DashboardPage() {
             </div>
           </div>
           <div className="hidden md:flex justify-center">
-            <Image 
-              src="https://placehold.co/400x300.png" 
-              alt="AI Recruitment Illustration" 
-              width={400} 
-              height={300} 
-              className="rounded-lg shadow-md"
-              data-ai-hint="recruitment technology"
+            <Image
+              src="/talentflow-dashboard-hero.png"
+              alt="TalentFlow AI Hero Image"
+              width={700}
+              height={543}
+              className="rounded-lg shadow-md object-contain"
+              priority // Add priority if it's an LCP element
+              data-ai-hint="recruitment technology platform"
             />
           </div>
         </CardContent>
