@@ -4,9 +4,8 @@
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { UploadCloud, Users, Briefcase, FileText, BarChart3, Sparkles } from 'lucide-react';
+import { UploadCloud, Users, Briefcase, FileText, Sparkles } from 'lucide-react';
 import { useAppContext } from '@/contexts/AppContext';
-import Image from 'next/image';
 import { Loader } from '@/components/ui/loader';
 
 
@@ -38,18 +37,18 @@ export default function DashboardPage() {
   return (
     <div className="space-y-8">
       <Card className="shadow-lg">
-        <CardHeader>
+        <CardHeader className="text-center pb-4"> {/* Added text-center and adjusted padding */}
           <CardTitle className="text-3xl font-bold">Welcome to TalentFlow AI</CardTitle>
           <CardDescription className="text-lg">
             Streamline your recruitment process with the power of AI.
           </CardDescription>
         </CardHeader>
-        <CardContent className="grid md:grid-cols-2 gap-6 items-center">
-          <div>
-            <p className="mb-6 text-muted-foreground leading-relaxed">
+        <CardContent className="p-6"> {/* Ensured standard padding */}
+          <div className="flex flex-col items-center text-center space-y-6"> {/* Centering content */}
+            <p className="text-muted-foreground leading-relaxed max-w-xl"> {/* max-w for better text flow */}
               TalentFlow AI helps you find the best talent faster by leveraging artificial intelligence for resume parsing, candidate matching, and interview preparation. Get started by uploading a resume or posting a new job.
             </p>
-            <div className="flex gap-4">
+            <div className="flex flex-wrap gap-4 justify-center"> {/* Centered buttons, added flex-wrap */}
               <Button asChild size="lg">
                 <Link href="/dashboard/candidates/new">
                   <UploadCloud className="mr-2 h-5 w-5" /> Upload Resume
@@ -61,17 +60,6 @@ export default function DashboardPage() {
                 </Link>
               </Button>
             </div>
-          </div>
-          <div className="hidden md:flex justify-center">
-            <Image
-              src="/talentflow-dashboard-hero.png"
-              alt="TalentFlow AI Hero Image"
-              width={700}
-              height={543}
-              className="rounded-lg shadow-md object-contain"
-              priority // Add priority if it's an LCP element
-              data-ai-hint="recruitment technology platform"
-            />
           </div>
         </CardContent>
       </Card>
