@@ -27,7 +27,6 @@ const emailSignUpSchema = z.object({
   email: z.string().email({ message: "Invalid email address" }),
   password: z.string().min(6, { message: "Password must be at least 6 characters" }),
   confirmPassword: z.string().min(6, { message: "Password must be at least 6 characters" }),
-  // Phone number is optional for email sign-up, but collected
   optionalPhoneNumber: z.string().optional().describe("Optional phone number for the user."),
 }).refine((data) => data.password === data.confirmPassword, {
   message: "Passwords don't match",
@@ -50,7 +49,6 @@ export type OtpFormValues = z.infer<typeof otpSchema>;
 
 export function LoginForm() {
   const { 
-    user, 
     signIn, 
     signUp, 
     sendPasswordReset, 
@@ -71,7 +69,6 @@ export function LoginForm() {
   const [confirmationResult, setConfirmationResult] = useState<ConfirmationResult | null>(null);
   const [currentPhoneNumber, setCurrentPhoneNumber] = useState("");
 
-  // Refs for forms
   const emailForm = useForm<z.infer<typeof emailLoginSchema> | z.infer<typeof emailSignUpSchema>>({
     resolver: zodResolver(isSignUp ? emailSignUpSchema : emailLoginSchema),
     defaultValues: isSignUp ? { email: "", password: "", confirmPassword: "", optionalPhoneNumber: "" } : { email: "", password: "" },
@@ -90,12 +87,19 @@ export function LoginForm() {
   const recaptchaContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    // Initialize reCAPTCHA when the component mounts and the container is available
-    // It should only initialize if the user is on the phone tab.
-    if (authMethod === "phone" && recaptchaContainerRef.current && !window.recaptchaVerifier) {
+    console.log("LoginForm: authMethod changed to", authMethod);
+    if (authMethod === "phone" && recaptchaContainerRef.current && !window.recaptchaVerifierInstance) {
+        console.log("LoginForm useEffect: Attempting to initialize reCAPTCHA because it's not on window and phone tab is active.");
         initializeRecaptcha('recaptcha-container');
     }
-  }, [authMethod, initializeRecaptcha]);
+    // Cleanup reCAPTCHA if switching away from phone tab and instance exists (optional, Firebase might handle this)
+    // return () => {
+    //   if (authMethod !== 'phone' && window.recaptchaVerifierInstance) {
+    //     // console.log("LoginForm useEffect: Cleaning up reCAPTCHA.");
+    //     // window.recaptchaVerifierInstance.clear(); // This might be needed if issues occur on re-init
+    //   }
+    // };
+  }, [authMethod, initializeRecaptcha, recaptchaContainerRef]);
 
 
   const handleEmailSubmit: SubmitHandler<any> = async (data) => {
@@ -108,19 +112,27 @@ export function LoginForm() {
   };
   
   const handleSendOtp: SubmitHandler<PhoneFormValues> = async (data) => {
+    // Fallback initialization attempt, though useEffect should ideally handle it.
+    if (authMethod === "phone" && recaptchaContainerRef.current && !window.recaptchaVerifierInstance) {
+        console.warn("handleSendOtp: Attempting to initialize reCAPTCHA as it seems not ready. This is a fallback.");
+        initializeRecaptcha('recaptcha-container');
+    }
+
     const result = await signInWithPhone(data.phoneNumber);
     if (result) {
       setConfirmationResult(result);
       setCurrentPhoneNumber(data.phoneNumber);
       setOtpSent(true);
       toast({ title: "OTP Sent", description: `An OTP has been sent to ${data.phoneNumber}.` });
+    } else {
+      // Error toast is handled by AuthContext or a specific toast here if preferred
+      toast({ title: "OTP Send Failed", description: authError?.message || "Could not send OTP. Please check the console for errors.", variant: "destructive" });
     }
   };
 
   const handleVerifyOtp: SubmitHandler<OtpFormValues> = async (data) => {
     if (confirmationResult) {
       await confirmPhoneOtp(confirmationResult, data.otp);
-      // AuthContext will handle user state update and redirect
     } else {
       toast({ title: "Verification Error", description: "OTP confirmation result not found. Please try sending OTP again.", variant: "destructive" });
     }
@@ -129,9 +141,12 @@ export function LoginForm() {
   const toggleFormMode = () => {
     setIsSignUp(!isSignUp);
     emailForm.reset(isSignUp ? { email: "", password: "" } : { email: "", password: "", confirmPassword: "", optionalPhoneNumber: "" });
-    phoneForm.reset();
-    otpForm.reset();
-    setOtpSent(false);
+    // Reset phone/OTP states if switching email form mode
+    if (authMethod === "phone") {
+        phoneForm.reset();
+        otpForm.reset();
+        setOtpSent(false);
+    }
   };
 
   const handleForgotPassword = async () => {
@@ -175,7 +190,7 @@ export function LoginForm() {
         <CardContent>
           <Tabs value={authMethod} onValueChange={(value) => {
             setAuthMethod(value as "email" | "phone");
-            setIsSignUp(false); // Reset to Sign In mode when switching tabs
+            setIsSignUp(false); 
             emailForm.reset(); 
             phoneForm.reset(); 
             otpForm.reset();
@@ -187,7 +202,7 @@ export function LoginForm() {
             </TabsList>
 
             <TabsContent value="email" className="mt-6">
-              {authError && <Alert variant="destructive" className="mb-4">
+              {authError && authMethod === "email" && <Alert variant="destructive" className="mb-4">
                 <AlertTitle>Authentication Error</AlertTitle>
                 <AlertDescription>{authError.message}</AlertDescription>
               </Alert>}
@@ -273,7 +288,7 @@ export function LoginForm() {
             </TabsContent>
 
             <TabsContent value="phone" className="mt-6">
-               {authError && <Alert variant="destructive" className="mb-4">
+               {authError && authMethod === "phone" && <Alert variant="destructive" className="mb-4">
                 <AlertTitle>Authentication Error</AlertTitle>
                 <AlertDescription>{authError.message}</AlertDescription>
               </Alert>}
@@ -284,6 +299,7 @@ export function LoginForm() {
                     <Input id="phoneNumber" type="tel" placeholder="+11234567890" {...phoneForm.register("phoneNumber")} />
                     {phoneForm.formState.errors.phoneNumber && <p className="text-sm text-destructive">{phoneForm.formState.errors.phoneNumber.message}</p>}
                   </div>
+                  {/* This div is where Firebase will render the reCAPTCHA widget (might be invisible) */}
                   <div id="recaptcha-container" ref={recaptchaContainerRef} className="my-4"></div>
                   <Button type="submit" className="w-full" disabled={loading}>
                     {loading ? <Loader size={20} className="mr-2" /> : <PhoneIcon className="mr-2"/>}
