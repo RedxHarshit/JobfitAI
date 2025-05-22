@@ -22,14 +22,13 @@ import {
 import { Loader } from "@/components/ui/loader";
 import { useToast } from "@/hooks/use-toast";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
-import { storage } from "@/lib/firebase"; 
-import { ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { User as UserIcon, ImagePlus } from "lucide-react";
+import { User as UserIcon } from "lucide-react";
 
-// Schema now only validates displayName. Photo is handled separately.
+// Schema validates displayName and an optional photoURL string.
 const profileFormSchema = z.object({
   displayName: z.string().min(1, "Display name cannot be empty.").max(50, "Display name is too long.").optional().or(z.literal('')),
+  photoURL: z.string().url("Please enter a valid URL for the photo.").optional().or(z.literal('')),
 });
 
 type ProfileFormValues = z.infer<typeof profileFormSchema>;
@@ -43,78 +42,34 @@ export function EditProfileDialog({ open, onOpenChange }: EditProfileDialogProps
   const { user, updateUserProfile, loading: authLoading, error: authError } = useAuth();
   const { toast } = useToast();
   const [localError, setLocalError] = useState<string | null>(null);
-  const [isUploading, setIsUploading] = useState(false);
-  const [selectedPhotoFile, setSelectedPhotoFile] = useState<File | null>(null);
-  const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
+  const [currentPhotoUrl, setCurrentPhotoUrl] = useState<string | null>(null);
 
   const form = useForm<ProfileFormValues>({
     resolver: zodResolver(profileFormSchema),
     defaultValues: {
-      displayName: "", // Will be set in useEffect
+      displayName: "",
+      photoURL: "",
     },
   });
 
   useEffect(() => {
-    if (user) {
+    if (user && open) { // Reset form when dialog opens and user exists
       form.reset({
         displayName: user.displayName || "",
+        photoURL: user.photoURL || "",
       });
-      setPhotoPreviewUrl(user.photoURL || null);
+      setCurrentPhotoUrl(user.photoURL || null);
     }
-    setSelectedPhotoFile(null); 
-    setLocalError(null);
+    if (!open) { // Clear error when dialog closes
+        setLocalError(null);
+    }
   }, [user, form, open]);
-
-  const handlePhotoChange = (event: ChangeEvent<HTMLInputElement>) => {
-    if (event.target.files && event.target.files[0]) {
-      const file = event.target.files[0];
-      const MAX_SIZE = 2 * 1024 * 1024; // 2MB
-      if (file.size > MAX_SIZE) {
-        toast({
-          title: "File Too Large",
-          description: "Profile picture must be less than 2MB.",
-          variant: "destructive",
-        });
-        event.target.value = ""; // Reset file input
-        return;
-      }
-      setSelectedPhotoFile(file);
-      setPhotoPreviewUrl(URL.createObjectURL(file)); 
-    } else {
-      setSelectedPhotoFile(null);
-      setPhotoPreviewUrl(user?.photoURL || null); 
-    }
-  };
 
   const onSubmit: SubmitHandler<ProfileFormValues> = async (data) => {
     setLocalError(null);
     if (!user) {
       setLocalError("User not authenticated.");
       return;
-    }
-
-    let newPhotoURL = user.photoURL; 
-
-    if (selectedPhotoFile) {
-      setIsUploading(true);
-      try {
-        // Create a unique file name or path to avoid conflicts if desired,
-        // or just use the original file name with user ID.
-        const fileRef = storageRef(storage, `profile_pictures/${user.uid}/${selectedPhotoFile.name}`);
-        const snapshot = await uploadBytes(fileRef, selectedPhotoFile);
-        newPhotoURL = await getDownloadURL(snapshot.ref);
-      } catch (uploadError: any) {
-        console.error("Photo upload error:", uploadError);
-        setLocalError(uploadError.message || "Failed to upload photo.");
-        toast({
-          title: "Photo Upload Failed",
-          description: uploadError.message || "Could not upload the new profile picture.",
-          variant: "destructive",
-        });
-        setIsUploading(false);
-        return;
-      }
-      // No finally block for setIsUploading(false) here, it's handled by main try/finally
     }
 
     const profileDataToUpdate: { displayName?: string; photoURL?: string } = {};
@@ -126,8 +81,9 @@ export function EditProfileDialog({ open, onOpenChange }: EditProfileDialogProps
       changesMade = true;
     }
 
-    if (newPhotoURL !== user.photoURL) {
-      profileDataToUpdate.photoURL = newPhotoURL || ""; // Use empty string to "remove" photo if newPhotoURL is null
+    const currentPhoto = user.photoURL || "";
+    if (data.photoURL !== undefined && data.photoURL !== currentPhoto) {
+      profileDataToUpdate.photoURL = data.photoURL; // Use the URL from the form
       changesMade = true;
     }
     
@@ -137,15 +93,17 @@ export function EditProfileDialog({ open, onOpenChange }: EditProfileDialogProps
         return;
     }
 
-    // If only the photo was changed, ensure displayName is included if it was initially set
-    if (changesMade && !profileDataToUpdate.displayName && currentDisplayName) {
-        profileDataToUpdate.displayName = currentDisplayName;
+    // Ensure displayName is included if it was initially set and only photo was changed (or vice-versa)
+     if (changesMade) {
+        if (profileDataToUpdate.displayName === undefined) {
+            profileDataToUpdate.displayName = currentDisplayName;
+        }
+        if (profileDataToUpdate.photoURL === undefined) {
+            profileDataToUpdate.photoURL = currentPhoto;
+        }
     }
 
-
-    setIsUploading(true); // General loading state for the update operation
     const success = await updateUserProfile(profileDataToUpdate);
-    setIsUploading(false); // Reset general loading state
 
     if (success) {
       toast({
@@ -160,19 +118,25 @@ export function EditProfileDialog({ open, onOpenChange }: EditProfileDialogProps
   };
   
   useEffect(() => {
-    if (authError && !open) { // Only update localError if dialog is not open to avoid race conditions
+    // Sync authError to localError if dialog is open
+    if (authError && open) { 
       setLocalError(authError.message);
     }
   }, [authError, open]);
 
+  const watchedPhotoURL = form.watch("photoURL");
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => {
       if (!isOpen) {
-        // Reset states when dialog is closed
-        setSelectedPhotoFile(null);
-        if (user) setPhotoPreviewUrl(user.photoURL || null);
-        form.reset({ displayName: user?.displayName || "" });
+        // Reset form and error when dialog is closed
+        if(user) {
+            form.reset({ displayName: user.displayName || "", photoURL: user.photoURL || "" });
+            setCurrentPhotoUrl(user.photoURL || null);
+        } else {
+            form.reset({ displayName: "", photoURL: "" });
+            setCurrentPhotoUrl(null);
+        }
         setLocalError(null);
       }
       onOpenChange(isOpen);
@@ -193,25 +157,12 @@ export function EditProfileDialog({ open, onOpenChange }: EditProfileDialogProps
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6 py-4">
           <div className="space-y-3 text-center">
              <Avatar className="w-24 h-24 mx-auto border-2 border-primary shadow-md">
-              <AvatarImage src={photoPreviewUrl || undefined} alt={user?.displayName || "User"} data-ai-hint="person avatar"/>
+              {/* Show preview from watchedPhotoURL if valid, otherwise current user's photo or fallback */}
+              <AvatarImage src={watchedPhotoURL || currentPhotoUrl || undefined} alt={user?.displayName || "User"} data-ai-hint="person avatar" />
               <AvatarFallback className="text-3xl">
                 {user?.displayName ? user.displayName[0].toUpperCase() : <UserIcon size={40}/>}
               </AvatarFallback>
             </Avatar>
-            <Label htmlFor="photoFile" className="inline-block cursor-pointer text-sm text-primary hover:underline p-2 rounded-md hover:bg-muted/50">
-                <span className="inline-flex items-center gap-1">
-                    <ImagePlus size={18}/> Change Photo
-                </span>
-            </Label>
-            <Input
-              id="photoFile"
-              type="file"
-              accept="image/png, image/jpeg, image/gif"
-              onChange={handlePhotoChange}
-              className="hidden" // Visually hidden, triggered by label
-              disabled={authLoading || isUploading}
-            />
-             {selectedPhotoFile && <p className="text-xs text-muted-foreground mt-1">{selectedPhotoFile.name}</p>}
           </div>
 
           <div className="space-y-2">
@@ -220,22 +171,36 @@ export function EditProfileDialog({ open, onOpenChange }: EditProfileDialogProps
               id="displayName"
               {...form.register("displayName")}
               placeholder="Your Name"
-              disabled={authLoading || isUploading}
+              disabled={authLoading}
             />
             {form.formState.errors.displayName && (
               <p className="text-sm text-destructive">{form.formState.errors.displayName.message}</p>
             )}
           </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="photoURL">Photo URL</Label>
+            <Input
+              id="photoURL"
+              type="url"
+              {...form.register("photoURL")}
+              placeholder="https://example.com/your-image.png"
+              disabled={authLoading}
+            />
+            {form.formState.errors.photoURL && (
+              <p className="text-sm text-destructive">{form.formState.errors.photoURL.message}</p>
+            )}
+          </div>
           
           <DialogFooter>
             <DialogClose asChild>
-              <Button type="button" variant="outline" disabled={authLoading || isUploading}>
+              <Button type="button" variant="outline" disabled={authLoading}>
                 Cancel
               </Button>
             </DialogClose>
-            <Button type="submit" disabled={authLoading || isUploading}>
-              {(authLoading || isUploading) && <Loader size={16} className="mr-2" />}
-              {isUploading ? "Saving..." : (authLoading ? "Saving..." : "Save changes")}
+            <Button type="submit" disabled={authLoading}>
+              {authLoading && <Loader size={16} className="mr-2" />}
+              {authLoading ? "Saving..." : "Save changes"}
             </Button>
           </DialogFooter>
         </form>
