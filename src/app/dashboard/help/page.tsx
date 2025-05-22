@@ -75,7 +75,11 @@ export default function HelpPage() {
                 <p className="text-sm text-muted-foreground mb-3">
                   Can't find an answer? Reach out to our support team.
                 </p>
-                <Button variant="outline" disabled>Email Support (Coming Soon)</Button>
+                <Button asChild variant="outline">
+                  <Link href="mailto:harshit14012018@gmail.com">
+                    <Mail className="mr-2 h-4 w-4" /> Email Support
+                  </Link>
+                </Button>
               </CardContent>
             </Card>
           </div>
