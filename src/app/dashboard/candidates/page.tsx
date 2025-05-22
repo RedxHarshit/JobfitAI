@@ -21,7 +21,7 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
+  // AlertDialogTrigger, // No longer needed here for the list items
 } from "@/components/ui/alert-dialog";
 import type { Candidate } from '@/types';
 
@@ -143,42 +143,40 @@ export default function CandidatesPage() {
                     <Eye className="mr-2 h-4 w-4" /> View Profile
                   </Link>
                 </Button>
-                <AlertDialogTrigger asChild>
-                   <Button 
-                      variant="destructive" 
-                      size="icon" 
-                      onClick={() => setCandidateToDelete(candidate)}
-                      aria-label="Delete candidate"
-                    >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </AlertDialogTrigger>
+                {/* Changed AlertDialogTrigger to a regular Button */}
+                <Button 
+                    variant="destructive" 
+                    size="icon" 
+                    onClick={() => setCandidateToDelete(candidate)}
+                    aria-label="Delete candidate"
+                  >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
               </CardFooter>
             </Card>
           ))}
         </div>
       )}
-       {candidateToDelete && (
-        <AlertDialog open={!!candidateToDelete} onOpenChange={(open) => !open && setCandidateToDelete(null)}>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
+      {/* This AlertDialog is controlled by the `open` prop and `candidateToDelete` state */}
+      <AlertDialog open={!!candidateToDelete} onOpenChange={(open) => !open && setCandidateToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
+            {candidateToDelete && (
               <AlertDialogDescription>
                 This action cannot be undone. This will permanently delete the candidate
                 profile for {candidateToDelete.candidateName || "this candidate"}.
               </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel onClick={() => setCandidateToDelete(null)}>Cancel</AlertDialogCancel>
-              <AlertDialogAction onClick={handleDeleteConfirm} className="bg-destructive hover:bg-destructive/90">
-                Yes, delete candidate
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-      )}
+            )}
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setCandidateToDelete(null)}>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDeleteConfirm} className="bg-destructive hover:bg-destructive/90">
+              Yes, delete candidate
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
-
-    
