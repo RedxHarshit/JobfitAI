@@ -20,7 +20,6 @@ import {
   SidebarInset,
   SidebarTrigger,
 } from "@/components/ui/sidebar";
-import { Button } from "@/components/ui/button";
 import { Home, Users, Briefcase, FileText, UploadCloud, Settings, LifeBuoy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { usePathname } from 'next/navigation';
@@ -52,6 +51,8 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
     { href: "/dashboard/candidates", label: "Candidates", icon: Users },
     { href: "/dashboard/jobs/new", label: "Add Job", icon: Briefcase },
     { href: "/dashboard/jobs", label: "Jobs", icon: FileText },
+    { href: "/dashboard/settings", label: "Settings", icon: Settings },
+    { href: "/dashboard/help", label: "Help", icon: LifeBuoy },
   ];
 
   return (
@@ -82,18 +83,8 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
           </SidebarMenu>
         </SidebarContent>
         <SidebarFooter className="p-2 mt-auto border-t border-sidebar-border">
-           <SidebarMenu>
-            <SidebarMenuItem>
-                <SidebarMenuButton tooltip={{content: "Settings", side: "right", className: "bg-popover text-popover-foreground"}}>
-                  <Settings /> <span>Settings</span>
-                </SidebarMenuButton>
-            </SidebarMenuItem>
-            <SidebarMenuItem>
-                <SidebarMenuButton tooltip={{content: "Help", side: "right", className: "bg-popover text-popover-foreground"}}>
-                  <LifeBuoy /> <span>Help</span>
-                </SidebarMenuButton>
-            </SidebarMenuItem>
-           </SidebarMenu>
+           {/* Footer can be used for other elements like user profile, theme toggle, etc. if needed */}
+           {/* For now, it's empty as Settings and Help are main nav items */}
         </SidebarFooter>
       </Sidebar>
       <SidebarInset className="flex flex-col">
