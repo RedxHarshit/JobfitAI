@@ -3,6 +3,7 @@
 import { initializeApp, getApps, getApp, type FirebaseOptions } from "firebase/app";
 import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
+import { getStorage } from "firebase/storage"; // Added for Firebase Storage
 
 // These are read from process.env (Next.js handles .env for these)
 const apiKey = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
@@ -17,7 +18,7 @@ const firebaseConfig: FirebaseOptions = {
   apiKey,
   authDomain,
   projectId,
-  storageBucket,
+  storageBucket, // Ensure this is correct, e.g., your-project-id.appspot.com
   messagingSenderId,
   appId,
   measurementId,
@@ -26,6 +27,7 @@ const firebaseConfig: FirebaseOptions = {
 let appInstance;
 let authInstance = null;
 let dbInstance = null;
+let storageInstance = null; // Added for Firebase Storage
 
 // Client-side check and log for missing critical Firebase config
 if (typeof window !== 'undefined') {
@@ -47,13 +49,10 @@ if (typeof window !== 'undefined') {
     console.error("CRITICAL Firebase Config Error (Client-Side): NEXT_PUBLIC_FIREBASE_PROJECT_ID is missing.");
     missingConfig = true;
   }
-  // Also check for GOOGLE_API_KEY for Genkit if on client, though it's primarily server-side.
-  // This is more of a reminder if someone tries to use Genkit client-side directly without proper setup.
-  // Genkit flows are typically invoked via server actions or API routes.
-  if (!process.env.GOOGLE_API_KEY && !process.env.NEXT_PUBLIC_GOOGLE_API_KEY) {
-     // console.warn("Genkit Info: GOOGLE_API_KEY (for server-side Genkit) or NEXT_PUBLIC_GOOGLE_API_KEY (if used client-side) seems to be missing. AI features might not work.");
+   if (!storageBucket) { 
+    console.error("CRITICAL Firebase Config Error (Client-Side): NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET is missing. File uploads will fail.");
+    missingConfig = true;
   }
-
 
   if (missingConfig) {
     console.error("Firebase initialization HALTED due to missing essential configuration on the client-side.");
@@ -62,7 +61,7 @@ if (typeof window !== 'undefined') {
 
 
 // Initialize Firebase only if essential keys are present
-if (firebaseConfig.apiKey && firebaseConfig.authDomain && firebaseConfig.projectId) {
+if (firebaseConfig.apiKey && firebaseConfig.authDomain && firebaseConfig.projectId && firebaseConfig.storageBucket) {
   try {
     if (!getApps().length) {
       appInstance = initializeApp(firebaseConfig);
@@ -73,24 +72,25 @@ if (firebaseConfig.apiKey && firebaseConfig.authDomain && firebaseConfig.project
     if (appInstance) {
       authInstance = getAuth(appInstance);
       dbInstance = getFirestore(appInstance);
+      storageInstance = getStorage(appInstance); // Initialize Storage
     } else {
-      console.error("Firebase app instance could not be initialized. Auth and Firestore will not be available.");
+      console.error("Firebase app instance could not be initialized. Auth, Firestore, and Storage will not be available.");
     }
   } catch (e: any) {
     console.error(`Firebase initialization failed critically: ${e.message}`, e);
     appInstance = undefined;
     authInstance = null;
     dbInstance = null;
+    storageInstance = null;
   }
 } else {
   if (typeof window === 'undefined') { 
     // This log will appear in the server terminal during build or SSR
     console.error(
-        "CRITICAL Firebase Config Error (Server-Side Check in firebase.ts): Essential Firebase configuration (apiKey, authDomain, projectId) is INCOMPLETE. " +
+        "CRITICAL Firebase Config Error (Server-Side Check in firebase.ts): Essential Firebase configuration (apiKey, authDomain, projectId, storageBucket) is INCOMPLETE. " +
         "Firebase will not be initialized. Check your environment variables (e.g., .env file for local, hosting provider settings for deployed)."
     );
   }
-  // Note: The client-side specific error for missing Firebase keys is handled above.
 }
 
-export { appInstance as app, authInstance as auth, dbInstance as db };
+export { appInstance as app, authInstance as auth, dbInstance as db, storageInstance as storage };

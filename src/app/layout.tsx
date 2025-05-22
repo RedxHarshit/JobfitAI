@@ -4,6 +4,7 @@ import './globals.css';
 import { AuthProvider } from '@/contexts/AuthContext';
 import { AppProvider } from '@/contexts/AppContext';
 import { Toaster } from "@/components/ui/toaster";
+import { ThemeProvider } from "next-themes";
 
 const geistSans = Geist({
   variable: '--font-geist-sans',
@@ -26,14 +27,21 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning> {/* Added suppressHydrationWarning for next-themes */}
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased font-sans`}>
-        <AuthProvider>
-          <AppProvider>
-            {children}
-            <Toaster />
-          </AppProvider>
-        </AuthProvider>
+        <ThemeProvider
+          attribute="class"
+          defaultTheme="system"
+          enableSystem
+          disableTransitionOnChange
+        >
+          <AuthProvider>
+            <AppProvider>
+              {children}
+              <Toaster />
+            </AppProvider>
+          </AuthProvider>
+        </ThemeProvider>
       </body>
     </html>
   );
