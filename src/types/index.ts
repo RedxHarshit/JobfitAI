@@ -9,20 +9,19 @@ export interface InterviewQuestionCategory {
 }
 
 export interface Candidate extends ParseResumeOutput {
-  id: string;
-  userId: string; // To associate with the Firebase User UID
+  id: string; // For HR-added candidates, this is Firestore's auto-ID. For candidates managing their own, this is their auth.uid.
+  userId: string; // For HR-added, this is HR's auth.uid. For candidate-managed, this is candidate's auth.uid.
   resumeFileName?: string;
-  parsedText?: string; // Full text of the resume if needed later
-  matchData?: MatchCandidateToJobOutput & { jobId: string | null }; // jobId can be null if custom
-  interviewQuestions?: InterviewQuestionCategory[]; // Updated structure
+  parsedText?: string;
+  matchData?: MatchCandidateToJobOutput & { jobId: string | null };
+  interviewQuestions?: InterviewQuestionCategory[];
+  profileLastUpdatedAt?: Date; // Timestamp for when the profile was last updated by the candidate
 }
 
 export interface Job {
   id:string;
-  userId: string; // To associate with the Firebase User UID
+  userId: string; // HR User UID who created the job
   title: string;
   description: string;
   createdAt: Date;
 }
-
-    

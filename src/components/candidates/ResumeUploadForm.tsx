@@ -1,3 +1,4 @@
+
 // src/components/candidates/ResumeUploadForm.tsx
 "use client";
 
@@ -12,7 +13,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { useToast } from "@/hooks/use-toast";
 import { Loader } from "@/components/ui/loader";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { UploadCloud, FileText, Sparkles } from "lucide-react";
+import { UploadCloud, Sparkles, UserSquare2 } from "lucide-react";
 import { parseResume, type ParseResumeOutput } from "@/ai/flows/parse-resume";
 import { fileToDataUri } from "@/utils/fileUtils";
 import { useAppContext } from "@/contexts/AppContext";
@@ -37,10 +38,22 @@ const resumeUploadSchema = z.object({
 
 type ResumeUploadFormValues = z.infer<typeof resumeUploadSchema>;
 
-export function ResumeUploadForm() {
+interface ResumeUploadFormProps {
+  isCandidateMode?: boolean;
+  candidateUserId?: string;
+  candidateAuthDisplayName?: string;
+  candidateAuthEmail?: string;
+}
+
+export function ResumeUploadForm({ 
+  isCandidateMode = false, 
+  candidateUserId,
+  candidateAuthDisplayName,
+  candidateAuthEmail
+}: ResumeUploadFormProps) {
   const { toast } = useToast();
-  const { addCandidate } = useAppContext();
-  const { user } = useAuth();
+  const { addCandidate, saveCandidateDataForUser } = useAppContext();
+  const { user: hrUser } = useAuth(); // For HR mode
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -61,92 +74,121 @@ export function ResumeUploadForm() {
 
 
   const onSubmit: SubmitHandler<ResumeUploadFormValues> = async (data) => {
-    if (!user) {
+    setError(null);
+    setLoading(true);
+
+    const currentUserId = isCandidateMode ? candidateUserId : hrUser?.uid;
+    if (!currentUserId) {
       setError("User not authenticated. Please log in.");
       toast({
         title: "Authentication Error",
-        description: "You must be logged in to upload a resume.",
+        description: "You must be logged in to perform this action.",
         variant: "destructive",
       });
+      setLoading(false);
       return;
     }
-
-    setLoading(true);
-    setError(null);
 
     if (!data.resume || data.resume.length === 0) {
-      // This case should ideally be caught by schema validation, but good to have defensively
       setError("No file selected.");
-      setLoading(false); // setLoading(false) is in finally, but being explicit here is okay
+      setLoading(false);
       return;
     }
-
     const file = data.resume[0];
 
     try {
       const dataUri = await fileToDataUri(file);
       const parsedData: ParseResumeOutput = await parseResume({ resumeDataUri: dataUri });
       
-      const candidateToCreate: Omit<Candidate, "id" | "userId"> = {
-        resumeFileName: file.name,
-        parsedText: '', 
-        ...parsedData,
-      };
-      
-      const newCandidate = await addCandidate(candidateToCreate);
+      if (isCandidateMode && candidateUserId) {
+        const candidateProfileData = {
+          candidateName: parsedData.candidateName || candidateAuthDisplayName || "N/A",
+          email: parsedData.email || candidateAuthEmail,
+          phone: parsedData.phone,
+          skills: parsedData.skills || [],
+          experience: parsedData.experience || [],
+          education: parsedData.education || [],
+          resumeFileName: file.name,
+          parsedText: '', // Or actual full text if you decide to store it
+          profileLastUpdatedAt: new Date(),
+          userId: candidateUserId, // This ensures the document is linked to the candidate's auth UID
+        };
 
-      if (newCandidate) {
-        toast({
-          title: "Resume Parsed Successfully!",
-          description: `${newCandidate.candidateName || 'Candidate'}'s resume has been processed.`,
-          variant: "default",
-        });
-        router.push(`/dashboard/candidates/${newCandidate.id}`);
-        reset(); 
-        setFileName(null); // Clear fileName after successful upload & reset
-      } else {
-        throw new Error("Failed to save candidate after parsing. User might not be authenticated or a database error occurred.");
+        const updatedCandidate = await saveCandidateDataForUser(candidateUserId, candidateProfileData);
+        if (updatedCandidate) {
+          toast({
+            title: "Resume Updated Successfully!",
+            description: `Your profile has been updated with the new resume.`,
+          });
+          router.push(`/candidate/dashboard`); // Or a dedicated profile view page
+        } else {
+          throw new Error("Failed to update your candidate profile.");
+        }
+
+      } else { // HR Mode
+        const candidateToCreate: Omit<Candidate, "id" | "userId"> = {
+          resumeFileName: file.name,
+          parsedText: '', 
+          ...parsedData,
+          // userId will be hrUser.uid, set by addCandidate
+        };
+        
+        const newCandidate = await addCandidate(candidateToCreate);
+        if (newCandidate) {
+          toast({
+            title: "Resume Parsed Successfully!",
+            description: `${newCandidate.candidateName || 'Candidate'}'s resume has been processed.`,
+          });
+          router.push(`/dashboard/candidates/${newCandidate.id}`);
+        } else {
+          throw new Error("Failed to save candidate after parsing.");
+        }
       }
-
+      reset(); 
+      setFileName(null);
     } catch (err: any) {
       console.error("Detailed error in ResumeUploadForm onSubmit:", err);
-      const errorMessage = err.message || (typeof err === 'string' ? err : "An unknown error occurred during resume parsing or saving.");
+      const errorMessage = err.message || (typeof err === 'string' ? err : "An unknown error occurred during resume processing or saving.");
       setError(errorMessage);
       toast({
-        title: "Upload Failed",
+        title: isCandidateMode ? "Resume Update Failed" : "Upload Failed",
         description: errorMessage,
         variant: "destructive",
       });
     } finally {
-      setLoading(false); // Ensure loading is always reset
+      setLoading(false);
     }
   };
+
+  const title = isCandidateMode ? "Upload/Update Your Resume" : "Upload Candidate Resume";
+  const description = isCandidateMode 
+    ? "Upload your latest resume. Our AI will parse it to keep your profile up-to-date for job matching."
+    : "Let AI extract key information and kickstart your evaluation process. Supports PDF, DOCX, and TXT files (max 5MB).";
+  const buttonIcon = isCandidateMode ? <UserSquare2 className="mr-2 h-5 w-5" /> : <Sparkles className="mr-2 h-5 w-5" />;
+  const buttonText = isCandidateMode ? "Upload and Update Profile" : "Parse with AI";
 
   return (
     <Card className="w-full max-w-2xl mx-auto shadow-xl">
       <CardHeader>
         <div className="flex items-center gap-3 mb-2">
           <UploadCloud className="h-8 w-8 text-primary" />
-          <CardTitle className="text-2xl">Upload Candidate Resume</CardTitle>
+          <CardTitle className="text-2xl">{title}</CardTitle>
         </div>
-        <CardDescription>
-          Let AI extract key information and kickstart your evaluation process. 
-          Supports PDF, DOCX, and TXT files (max 5MB).
-        </CardDescription>
+        <CardDescription>{description}</CardDescription>
       </CardHeader>
       <CardContent>
         {error && (
           <Alert variant="destructive" className="mb-4">
-            <AlertTitle>Upload Failed</AlertTitle>
+            <AlertTitle>{isCandidateMode ? "Update Failed" : "Upload Failed"}</AlertTitle>
             <AlertDescription>{error}</AlertDescription>
           </Alert>
         )}
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
           <div className="space-y-2">
-            <Label htmlFor="resume" className="text-base">Resume File</Label>
+            <Label htmlFor="resume-upload-input" className="text-base">Resume File</Label>
             <div className="flex items-center justify-center w-full">
                 <label 
-                    htmlFor="resume-input" 
+                    htmlFor="resume-upload-input" 
                     className={cn(
                         "flex flex-col items-center justify-center w-full h-48 border-2 border-dashed rounded-lg cursor-pointer",
                         "bg-muted/50 hover:bg-muted/75 border-border hover:border-primary",
@@ -167,25 +209,21 @@ export function ResumeUploadForm() {
                           </>
                         )}
                     </div>
-                    <Input id="resume-input" type="file" className="hidden" {...register("resume")} />
+                    <Input id="resume-upload-input" type="file" className="hidden" {...register("resume")} />
                 </label>
             </div>
             {errors.resume && <p className="text-sm text-destructive pt-1">{errors.resume.message}</p>}
           </div>
           
           <Button type="submit" className="w-full text-lg py-6" disabled={loading || !watchedFiles || watchedFiles.length === 0}>
-            {loading ? (
-              <Loader size={24} className="mr-2" />
-            ) : (
-              <Sparkles className="mr-2 h-5 w-5" />
-            )}
-            {loading ? "Parsing Resume..." : "Parse with AI"}
+            {loading ? <Loader size={24} className="mr-2" /> : buttonIcon}
+            {loading ? (isCandidateMode ? "Processing Resume..." : "Parsing Resume...") : buttonText}
           </Button>
         </form>
       </CardContent>
       <CardFooter>
         <p className="text-xs text-muted-foreground">
-          Your data is processed securely. Ensure the resume does not contain overly sensitive personal information not relevant for recruitment.
+          Your data is processed securely. Ensure the resume does not contain overly sensitive personal information not relevant for job applications.
         </p>
       </CardFooter>
     </Card>
