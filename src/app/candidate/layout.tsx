@@ -13,7 +13,7 @@ export default function CandidateLayout({ children }: { children: ReactNode }) {
           <BrainCircuit color="hsl(var(--primary))" style={{ width: '28px', height: '28px' }} />
           <span className="font-bold text-2xl text-primary">TalentFlow AI - Candidate Portal</span>
         </Link>
-        <AuthButton />
+        <AuthButton /> {/* This will show user avatar & logout if logged in */}
       </header>
       <main className="flex-1 p-4 sm:p-6">
         {children}
