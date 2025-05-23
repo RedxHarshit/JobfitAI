@@ -21,7 +21,14 @@ const nextConfig: NextConfig = {
       },
     ],
   },
-  devIndicators: false, // Attempt to disable all development indicators
+  devIndicators: {
+    // Attempt to disable all development indicators by setting the parent option to false
+    // buildActivity: false, // This specific key is deprecated
+    allowedDevOrigins: [
+      'http://hr.talentflow.local:9002',
+      'http://candidate.talentflow.local:9002',
+    ],
+  },
 };
 
 export default nextConfig;
