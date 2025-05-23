@@ -23,8 +23,8 @@ const nextConfig: NextConfig = {
   },
   devIndicators: false, // To disable dev tools UI
   allowedDevOrigins: [
-    'http://hr.talentflow.local:9002',
-    'http://candidate.talentflow.local:9002',
+    'http://hr.talentflow.local',
+    'http://candidate.talentflow.local',
   ],
 };
 
