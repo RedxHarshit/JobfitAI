@@ -1,4 +1,3 @@
-
 // src/app/candidate/questionnaire/[applicationId]/page.tsx
 "use client";
 
@@ -33,6 +32,9 @@ export default function CandidateQuestionnairePage() {
   const [submitting, setSubmitting] = useState(false);
   const [answers, setAnswers] = useState<Record<string, string>>({});
 
+  const stableGetJobApplicationById = useCallback(getJobApplicationById, []);
+  const stableUpdateJobApplication = useCallback(updateJobApplication, []);
+
   // Initial data fetch for the application
   useEffect(() => {
     if (!applicationId) {
@@ -42,7 +44,7 @@ export default function CandidateQuestionnairePage() {
     }
     setLoading(true);
     setError(null);
-    getJobApplicationById(applicationId)
+    stableGetJobApplicationById(applicationId)
       .then(appData => {
         if (!appData) {
           setError("Application not found.");
@@ -65,7 +67,7 @@ export default function CandidateQuestionnairePage() {
       .finally(() => {
         setLoading(false);
       });
-  }, [applicationId, getJobApplicationById]);
+  }, [applicationId, stableGetJobApplicationById]);
 
 
   const handleGenerateQuestions = useCallback(async (
@@ -73,11 +75,17 @@ export default function CandidateQuestionnairePage() {
     candidateResumeText: string,
     jobDesc: string
   ) => {
-    if (!applicationId || generatingQuestions) return;
+    if (!applicationId || generatingQuestions || !candidateResumeText || !jobDesc) {
+      console.warn("[QuestionnairePage] Skipping question generation due to missing data or ongoing generation.", {applicationId, generatingQuestions, hasResume: !!candidateResumeText, hasJobDesc: !!jobDesc });
+      if (!candidateResumeText || !jobDesc) {
+        setError("Cannot generate questions: Candidate profile or job description is missing from the application snapshot.");
+      }
+      return;
+    }
 
     console.log("[QuestionnairePage] Attempting to generate questions for app:", applicationId);
     setGeneratingQuestions(true);
-    setError(null); // Clear previous errors specific to generation
+    setError(null);
     try {
       const result = await generateQuestionnaireForApplication({
         candidateResumeText: candidateResumeText,
@@ -86,7 +94,7 @@ export default function CandidateQuestionnairePage() {
 
       if (result && result.questions && result.questions.length > 0) {
         const questionsWithIds: AIQuestion[] = result.questions.map((qText, idx) => ({ id: `q_${idx}_${Date.now()}`, text: qText }));
-        await updateJobApplication(applicationId, {
+        await stableUpdateJobApplication(applicationId, {
           questions: questionsWithIds,
           status: 'questionnaire_in_progress',
           questionnaireGeneratedAt: new Date()
@@ -105,7 +113,7 @@ export default function CandidateQuestionnairePage() {
       setGeneratingQuestions(false);
       console.log("[QuestionnairePage] Finished question generation attempt for app:", applicationId);
     }
-  }, [applicationId, updateJobApplication, toast, setApplication, setGeneratingQuestions, setError]); // Added missing dependencies
+  }, [applicationId, stableUpdateJobApplication, toast, generatingQuestions]);
 
   // Effect to trigger question generation based on fetched application state
   useEffect(() => {
@@ -114,7 +122,7 @@ export default function CandidateQuestionnairePage() {
         (!application.questions || application.questions.length === 0) &&
         application.candidateResumeTextSnapshot &&
         application.jobDescription &&
-        !generatingQuestions // Check this flag before calling
+        !generatingQuestions
     ) {
       handleGenerateQuestions(application, application.candidateResumeTextSnapshot, application.jobDescription);
     }
@@ -146,14 +154,13 @@ export default function CandidateQuestionnairePage() {
     const formattedAnswers = Object.entries(answers).map(([qid, ans]) => ({questionId: qid, answerText: ans}));
 
     try {
-      await updateJobApplication(applicationId, {
+      await stableUpdateJobApplication(applicationId, {
         answers: formattedAnswers,
-        status: 'questionnaire_completed', // Mark as completed before scoring
+        status: 'questionnaire_completed',
         questionnaireCompletedAt: new Date(),
       });
       console.log("[QuestionnairePage] Answers saved for app:", applicationId, "Status set to questionnaire_completed.");
 
-      // Prepare data for scoring
       const resumeTextForScoring = application.candidateResumeTextSnapshot;
       const jobDescForScoring = application.jobDescription;
       const answersForScoring = formattedAnswers;
@@ -161,10 +168,11 @@ export default function CandidateQuestionnairePage() {
       console.log("[QuestionnairePage] Submitting questionnaire, preparing for AI scoring with inputs:", { resumeText: resumeTextForScoring ? 'Available' : 'MISSING', jobDescription: jobDescForScoring ? 'Available' : 'MISSING', answers: answersForScoring });
 
       if (!resumeTextForScoring || !jobDescForScoring || answersForScoring.length === 0) {
-        throw new Error("Missing resume, job description, or answers for scoring.");
+        console.error("[QuestionnairePage] Missing critical data for scoring", { resumeTextForScoring, jobDescForScoring, answersForScoring });
+        throw new Error("Missing resume, job description, or answers for scoring. Cannot proceed with automated scoring.");
       }
 
-      let finalStatus: JobApplication['status'] = 'under_review_hr'; // Default if scoring is successful
+      let finalStatus: JobApplication['status'] = 'under_review_hr'; // Default if scoring fails
       let scoreData: Partial<JobApplication> = {};
 
       try {
@@ -182,20 +190,25 @@ export default function CandidateQuestionnairePage() {
           if (scoringResult.score < 50) {
             finalStatus = 'rejected_auto';
             console.log(`[QuestionnairePage] Automated Rejection for App ID ${applicationId}: Score ${scoringResult.score}. Simulating rejection email.`);
+            // Here you would typically trigger an actual email service
           } else {
             finalStatus = 'under_review_hr';
             console.log(`[QuestionnairePage] Application for App ID ${applicationId} scored ${scoringResult.score}. Status set to under_review_hr. Simulating HR notification.`);
+            // Here you would typically trigger an HR notification
           }
         } else {
+            console.error("[QuestionnairePage] Invalid scoring result from AI:", scoringResult);
             throw new Error("AI scoring did not return a valid score object.");
         }
       } catch (scoringError: any) {
         console.error("[QuestionnairePage] Error DIRECTLY FROM scoreApplication or during its processing:", scoringError);
-        toast({ title: "Automated Scoring Failed", description: "Your application will be reviewed manually. " + (scoringError.message || ""), variant: "default", duration: 7000 });
-        finalStatus = 'review_needed_scoring_failed';
+        toast({ title: "Automated Scoring Failed", description: "Your application will be reviewed manually. " + (scoringError.message || "Unknown scoring error."), variant: "default", duration: 7000 });
+        finalStatus = 'review_needed_scoring_failed'; 
+        scoreData.score = undefined; 
+        scoreData.scoreJustification = "Automated scoring failed: " + (scoringError.message || "Unknown error");
       }
 
-      await updateJobApplication(applicationId, {
+      await stableUpdateJobApplication(applicationId, {
         status: finalStatus,
         ...scoreData,
       });
@@ -208,8 +221,6 @@ export default function CandidateQuestionnairePage() {
         console.error("[QuestionnairePage] Error submitting questionnaire or during scoring process:", e);
         setError(e.message || "Failed to submit questionnaire.");
         toast({ title: "Submission Failed", description: e.message || "Could not submit questionnaire.", variant: "destructive" });
-        // Optionally revert status if initial answer save failed catastrophically,
-        // but usually, we want to keep answers if they were saved.
     } finally {
         setSubmitting(false);
     }
