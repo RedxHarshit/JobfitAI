@@ -1,3 +1,4 @@
+
 // src/app/candidate/questionnaire/[applicationId]/page.tsx
 "use client";
 
@@ -16,12 +17,18 @@ import { scoreApplication } from '@/ai/flows/score-application';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/contexts/AuthContext'; // For getting user UID if needed for logs
+// Removed Firestore imports for mail collection as we are reverting to simulation
+// import { db } from '@/lib/firebase';
+// import { collection, addDoc } from 'firebase/firestore';
+
 
 export default function CandidateQuestionnairePage() {
   const params = useParams();
   const router = useRouter();
   const { getJobApplicationById, updateJobApplication } = useAppContext();
   const { toast } = useToast();
+  const { user } = useAuth(); // Get current user
 
   const applicationId = typeof params.applicationId === 'string' ? params.applicationId : undefined;
 
@@ -32,10 +39,9 @@ export default function CandidateQuestionnairePage() {
   const [submitting, setSubmitting] = useState(false);
   const [answers, setAnswers] = useState<Record<string, string>>({});
 
-  const stableGetJobApplicationById = useCallback(getJobApplicationById, []);
-  const stableUpdateJobApplication = useCallback(updateJobApplication, []);
+  const stableGetJobApplicationById = useCallback(getJobApplicationById, [getJobApplicationById]);
+  const stableUpdateJobApplication = useCallback(updateJobApplication, [updateJobApplication]);
 
-  // Initial data fetch for the application
   useEffect(() => {
     if (!applicationId) {
       setError("Application ID is missing.");
@@ -115,7 +121,7 @@ export default function CandidateQuestionnairePage() {
     }
   }, [applicationId, stableUpdateJobApplication, toast, generatingQuestions]);
 
-  // Effect to trigger question generation based on fetched application state
+
   useEffect(() => {
     if (application &&
         application.status === 'questionnaire_pending' &&
@@ -164,6 +170,7 @@ export default function CandidateQuestionnairePage() {
       const resumeTextForScoring = application.candidateResumeTextSnapshot;
       const jobDescForScoring = application.jobDescription;
       const answersForScoring = formattedAnswers;
+      const candidateEmailForNotification = application.candidateEmailSnapshot;
 
       console.log("[QuestionnairePage] Submitting questionnaire, preparing for AI scoring with inputs:", { resumeText: resumeTextForScoring ? 'Available' : 'MISSING', jobDescription: jobDescForScoring ? 'Available' : 'MISSING', answers: answersForScoring });
 
@@ -172,7 +179,7 @@ export default function CandidateQuestionnairePage() {
         throw new Error("Missing resume, job description, or answers for scoring. Cannot proceed with automated scoring.");
       }
 
-      let finalStatus: JobApplication['status'] = 'under_review_hr'; // Default if scoring fails
+      let finalStatus: JobApplication['status'] = 'under_review_hr'; 
       let scoreData: Partial<JobApplication> = {};
 
       try {
@@ -189,12 +196,12 @@ export default function CandidateQuestionnairePage() {
           scoreData.scoreJustification = scoringResult.justification;
           if (scoringResult.score < 50) {
             finalStatus = 'rejected_auto';
-            console.log(`[QuestionnairePage] Automated Rejection for App ID ${applicationId}: Score ${scoringResult.score}. Simulating rejection email.`);
-            // Here you would typically trigger an actual email service
+            console.log(`[QuestionnairePage] Automated Rejection for App ID ${applicationId} (Candidate: ${candidateEmailForNotification || 'N/A'}): Score ${scoringResult.score}. Simulating rejection email.`);
+            // SIMULATING EMAIL SENDING
           } else {
             finalStatus = 'under_review_hr';
-            console.log(`[QuestionnairePage] Application for App ID ${applicationId} scored ${scoringResult.score}. Status set to under_review_hr. Simulating HR notification.`);
-            // Here you would typically trigger an HR notification
+            console.log(`[QuestionnairePage] Application for App ID ${applicationId} (Candidate: ${candidateEmailForNotification || 'N/A'}) scored ${scoringResult.score}. Status set to under_review_hr. Simulating HR notification.`);
+            // SIMULATING HR NOTIFICATION
           }
         } else {
             console.error("[QuestionnairePage] Invalid scoring result from AI:", scoringResult);
@@ -365,3 +372,4 @@ export default function CandidateQuestionnairePage() {
     </div>
   );
 }
+
