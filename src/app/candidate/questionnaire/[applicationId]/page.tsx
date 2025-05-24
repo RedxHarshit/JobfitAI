@@ -2,7 +2,7 @@
 // src/app/candidate/questionnaire/[applicationId]/page.tsx
 "use client";
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useAppContext } from '@/contexts/AppContext';
 import type { JobApplication, AIQuestion } from '@/types';
@@ -13,6 +13,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { ArrowLeft, Lightbulb, Send, CheckCircle } from 'lucide-react';
 import Link from 'next/link';
 import { generateQuestionnaireForApplication } from '@/ai/flows/generate-questionnaire';
+import { scoreApplication } from '@/ai/flows/score-application';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
@@ -20,11 +21,11 @@ import { useToast } from '@/hooks/use-toast';
 export default function CandidateQuestionnairePage() {
   const params = useParams();
   const router = useRouter();
-  const { getJobApplicationById, updateJobApplication } = useAppContext(); // Removed userCandidateProfile from here
+  const { getJobApplicationById, updateJobApplication } = useAppContext();
   const { toast } = useToast();
-  
+
   const applicationId = typeof params.applicationId === 'string' ? params.applicationId : undefined;
-  
+
   const [application, setApplication] = useState<JobApplication | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -32,94 +33,103 @@ export default function CandidateQuestionnairePage() {
   const [submitting, setSubmitting] = useState(false);
   const [answers, setAnswers] = useState<Record<string, string>>({});
 
+  // Initial data fetch for the application
   useEffect(() => {
     if (!applicationId) {
       setError("Application ID is missing.");
       setLoading(false);
       return;
     }
-
-    const fetchApplication = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const appData = await getJobApplicationById(applicationId);
+    setLoading(true);
+    setError(null);
+    getJobApplicationById(applicationId)
+      .then(appData => {
         if (!appData) {
           setError("Application not found.");
           setApplication(null);
         } else {
           setApplication(appData);
-          // Use candidateResumeTextSnapshot from the application for generating questions
-          if (appData.status === 'questionnaire_pending' && (!appData.questions || appData.questions.length === 0)) {
-            if (appData.candidateResumeTextSnapshot && appData.jobDescription) {
-              handleGenerateQuestions(appData, appData.candidateResumeTextSnapshot, appData.jobDescription);
-            } else {
-               setError("Cannot generate questions: Candidate resume snapshot or job description is missing in the application record.");
-            }
-          }
-          // Initialize answers state if questions already exist
-          if (appData.questions && appData.questions.length > 0) {
+          if (appData.answers && appData.answers.length > 0) {
             const initialAnswers: Record<string, string> = {};
-            (appData.answers || []).forEach(ans => {
+            appData.answers.forEach(ans => {
               initialAnswers[ans.questionId] = ans.answerText;
             });
             setAnswers(initialAnswers);
           }
         }
-      } catch (e: any) {
+      })
+      .catch(e => {
         setError(e.message || "Failed to load application details.");
         setApplication(null);
-      } finally {
+      })
+      .finally(() => {
         setLoading(false);
-      }
-    };
+      });
+  }, [applicationId, getJobApplicationById]);
 
-    fetchApplication();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [applicationId, getJobApplicationById]); // Removed handleGenerateQuestions from dependency array as it uses appData directly
 
-  const handleGenerateQuestions = async (
-        appData: JobApplication, 
-        candidateResumeText: string, 
-        jobDesc: string
-    ) => {
-    if (!applicationId) return;
+  const handleGenerateQuestions = useCallback(async (
+    appDataToGenerateFor: JobApplication,
+    candidateResumeText: string,
+    jobDesc: string
+  ) => {
+    if (!applicationId || generatingQuestions) return;
 
+    console.log("[QuestionnairePage] Attempting to generate questions for app:", applicationId);
     setGeneratingQuestions(true);
+    setError(null); // Clear previous errors specific to generation
     try {
       const result = await generateQuestionnaireForApplication({
         candidateResumeText: candidateResumeText,
         jobDescription: jobDesc,
       });
-      
+
       if (result && result.questions && result.questions.length > 0) {
         const questionsWithIds: AIQuestion[] = result.questions.map((qText, idx) => ({ id: `q_${idx}_${Date.now()}`, text: qText }));
-        await updateJobApplication(applicationId, { 
-          questions: questionsWithIds, 
-          status: 'questionnaire_in_progress', 
-          questionnaireGeneratedAt: new Date() 
+        await updateJobApplication(applicationId, {
+          questions: questionsWithIds,
+          status: 'questionnaire_in_progress',
+          questionnaireGeneratedAt: new Date()
         });
-        setApplication(prev => prev ? { ...prev, questions: questionsWithIds, status: 'questionnaire_in_progress' } : null);
+        setApplication(prev => prev ? { ...prev, questions: questionsWithIds, status: 'questionnaire_in_progress', questionnaireGeneratedAt: new Date() } : null);
         toast({ title: "Questions Generated", description: "Your personalized questionnaire is ready." });
       } else {
         setError("AI failed to generate questions. Please try again or contact support.");
         toast({ title: "Question Generation Failed", description: "Could not generate questions.", variant: "destructive" });
       }
     } catch (e: any) {
-      console.error("Error generating questionnaire:", e);
+      console.error("[QuestionnairePage] Error generating questionnaire:", e);
       setError(e.message || "Error generating questionnaire.");
       toast({ title: "Error", description: e.message || "Error generating questionnaire.", variant: "destructive" });
     } finally {
       setGeneratingQuestions(false);
+      console.log("[QuestionnairePage] Finished question generation attempt for app:", applicationId);
     }
-  };
+  }, [applicationId, updateJobApplication, toast, setApplication, setGeneratingQuestions, setError]); // Added missing dependencies
+
+  // Effect to trigger question generation based on fetched application state
+  useEffect(() => {
+    if (application &&
+        application.status === 'questionnaire_pending' &&
+        (!application.questions || application.questions.length === 0) &&
+        application.candidateResumeTextSnapshot &&
+        application.jobDescription &&
+        !generatingQuestions // Check this flag before calling
+    ) {
+      handleGenerateQuestions(application, application.candidateResumeTextSnapshot, application.jobDescription);
+    }
+  }, [application, generatingQuestions, handleGenerateQuestions]);
+
 
   const handleAnswerChange = (questionId: string, answerText: string) => {
     setAnswers(prev => ({ ...prev, [questionId]: answerText }));
   };
 
   const handleSubmitQuestionnaire = async () => {
-    if (!applicationId || !application || !application.questions) return;
+    if (!applicationId || !application || !application.questions) {
+        toast({ title: "Error", description: "Application data not loaded.", variant: "destructive" });
+        return;
+    }
 
     const allQuestionsAnswered = application.questions.every(q => answers[q.id] && answers[q.id].trim() !== '');
     if (!allQuestionsAnswered) {
@@ -130,20 +140,76 @@ export default function CandidateQuestionnairePage() {
       });
       return;
     }
-    
+
     setSubmitting(true);
+    setError(null);
+    const formattedAnswers = Object.entries(answers).map(([qid, ans]) => ({questionId: qid, answerText: ans}));
+
     try {
-      const formattedAnswers = Object.entries(answers).map(([qid, ans]) => ({questionId: qid, answerText: ans}));
-      await updateJobApplication(applicationId, { 
-        status: 'questionnaire_completed', 
-        questionnaireCompletedAt: new Date(), 
-        answers: formattedAnswers 
+      await updateJobApplication(applicationId, {
+        answers: formattedAnswers,
+        status: 'questionnaire_completed', // Mark as completed before scoring
+        questionnaireCompletedAt: new Date(),
       });
+      console.log("[QuestionnairePage] Answers saved for app:", applicationId, "Status set to questionnaire_completed.");
+
+      // Prepare data for scoring
+      const resumeTextForScoring = application.candidateResumeTextSnapshot;
+      const jobDescForScoring = application.jobDescription;
+      const answersForScoring = formattedAnswers;
+
+      console.log("[QuestionnairePage] Submitting questionnaire, preparing for AI scoring with inputs:", { resumeText: resumeTextForScoring ? 'Available' : 'MISSING', jobDescription: jobDescForScoring ? 'Available' : 'MISSING', answers: answersForScoring });
+
+      if (!resumeTextForScoring || !jobDescForScoring || answersForScoring.length === 0) {
+        throw new Error("Missing resume, job description, or answers for scoring.");
+      }
+
+      let finalStatus: JobApplication['status'] = 'under_review_hr'; // Default if scoring is successful
+      let scoreData: Partial<JobApplication> = {};
+
+      try {
+        console.log("[QuestionnairePage] ABOUT TO CALL scoreApplication...");
+        const scoringResult = await scoreApplication({
+          candidateResumeText: resumeTextForScoring,
+          jobDescription: jobDescForScoring,
+          questionnaireAnswers: answersForScoring.map(a => ({ questionText: application.questions?.find(q=>q.id === a.questionId)?.text || "", answerText: a.answerText })),
+        });
+        console.log("[QuestionnairePage] SUCCESSFULLY RETURNED FROM scoreApplication. Result:", scoringResult);
+
+        if (scoringResult && typeof scoringResult.score === 'number') {
+          scoreData.score = scoringResult.score;
+          scoreData.scoreJustification = scoringResult.justification;
+          if (scoringResult.score < 50) {
+            finalStatus = 'rejected_auto';
+            console.log(`[QuestionnairePage] Automated Rejection for App ID ${applicationId}: Score ${scoringResult.score}. Simulating rejection email.`);
+          } else {
+            finalStatus = 'under_review_hr';
+            console.log(`[QuestionnairePage] Application for App ID ${applicationId} scored ${scoringResult.score}. Status set to under_review_hr. Simulating HR notification.`);
+          }
+        } else {
+            throw new Error("AI scoring did not return a valid score object.");
+        }
+      } catch (scoringError: any) {
+        console.error("[QuestionnairePage] Error DIRECTLY FROM scoreApplication or during its processing:", scoringError);
+        toast({ title: "Automated Scoring Failed", description: "Your application will be reviewed manually. " + (scoringError.message || ""), variant: "default", duration: 7000 });
+        finalStatus = 'review_needed_scoring_failed';
+      }
+
+      await updateJobApplication(applicationId, {
+        status: finalStatus,
+        ...scoreData,
+      });
+      console.log(`[QuestionnairePage] Final status for app ${applicationId} set to: ${finalStatus}`);
+
       toast({ title: "Questionnaire Submitted!", description: "Thank you for completing the questionnaire." });
       router.push(`/candidate/feedback/${applicationId}`);
+
     } catch (e: any) {
+        console.error("[QuestionnairePage] Error submitting questionnaire or during scoring process:", e);
         setError(e.message || "Failed to submit questionnaire.");
         toast({ title: "Submission Failed", description: e.message || "Could not submit questionnaire.", variant: "destructive" });
+        // Optionally revert status if initial answer save failed catastrophically,
+        // but usually, we want to keep answers if they were saved.
     } finally {
         setSubmitting(false);
     }
@@ -190,8 +256,8 @@ export default function CandidateQuestionnairePage() {
       </div>
     );
   }
-  
-  if (application.status === 'questionnaire_completed') {
+
+  if (application.status !== 'questionnaire_pending' && application.status !== 'questionnaire_in_progress') {
     return (
       <div className="max-w-3xl mx-auto space-y-6 text-center">
          <Button asChild variant="outline" className="mb-6 mr-auto block">
@@ -202,11 +268,11 @@ export default function CandidateQuestionnairePage() {
         <Card className="shadow-lg">
             <CardHeader>
                 <CheckCircle className="mx-auto h-12 w-12 text-green-500" />
-                <CardTitle className="text-2xl mt-4">Questionnaire Already Completed</CardTitle>
+                <CardTitle className="text-2xl mt-4">Questionnaire Status: {application.status.replace(/_/g, ' ')}</CardTitle>
             </CardHeader>
             <CardContent>
-                <p className="text-muted-foreground">You have already submitted the questionnaire for "{application.jobTitle}".</p>
-                <p className="mt-2 text-muted-foreground">We will be in touch regarding the next steps.</p>
+                <p className="text-muted-foreground">You have already submitted or this questionnaire is past the pending stage for "{application.jobTitle}".</p>
+                <p className="mt-2 text-muted-foreground">We will be in touch regarding the next steps if applicable.</p>
             </CardContent>
             <CardFooter className="justify-center">
                 <Button asChild>
@@ -244,17 +310,17 @@ export default function CandidateQuestionnairePage() {
               <p className="mt-2 text-muted-foreground">Generating your personalized questions...</p>
             </div>
           )}
-          
+
           {application.questions && application.questions.length > 0 && !generatingQuestions && (
             <div className="space-y-6">
               <p>Please answer the following questions to the best of your ability.</p>
               {application.questions.map((q, index) => (
                 <div key={q.id} className="p-4 border rounded-md bg-card">
                   <Label htmlFor={q.id} className="text-md font-semibold mb-2 block">Question {index + 1}: {q.text}</Label>
-                  <Textarea 
-                    id={q.id} 
-                    rows={4} 
-                    placeholder="Your answer..." 
+                  <Textarea
+                    id={q.id}
+                    rows={4}
+                    placeholder="Your answer..."
                     value={answers[q.id] || ''}
                     onChange={(e) => handleAnswerChange(q.id, e.target.value)}
                     className="bg-background"
@@ -267,14 +333,14 @@ export default function CandidateQuestionnairePage() {
               </Button>
             </div>
           )}
-          
-          {!generatingQuestions && (!application.questions || application.questions.length === 0) && application.status !== 'questionnaire_pending' && application.status !== 'questionnaire_in_progress' && (
+
+          {!generatingQuestions && (!application.questions || application.questions.length === 0) && (application.status === 'questionnaire_pending' || application.status === 'questionnaire_in_progress') && (
              <Alert>
                 <Lightbulb className="h-4 w-4" />
                 <AlertTitle>No Questions Yet</AlertTitle>
                 <AlertDescription>
-                Questions for this application are not yet available or couldn't be generated. Please check back or contact support if this persists.
-                If you just landed here, questions might still be generating if your resume and the job description were found.
+                Questions for this application are not yet available. They might be generating.
+                If this persists, please check back or contact support.
                 </AlertDescription>
             </Alert>
           )}
@@ -288,4 +354,3 @@ export default function CandidateQuestionnairePage() {
     </div>
   );
 }
-

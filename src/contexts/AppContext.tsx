@@ -2,7 +2,7 @@
 // src/contexts/AppContext.tsx
 "use client";
 
-import type { Candidate, Job, JobApplication } from "@/types";
+import type { Candidate, Job, JobApplication, AIQuestion } from "@/types";
 import { createContext, useContext, useState, ReactNode, useEffect, useCallback } from "react";
 import { db } from "@/lib/firebase";
 import {
@@ -33,10 +33,9 @@ const convertTimestampsToDates = (data: DocumentData): any => {
       if (!Array.isArray(newData[key])) {
           newData[key] = convertTimestampsToDates(newData[key] as DocumentData);
       } else {
-        // If it's an array, iterate and convert Timestamps within objects in the array
-        newData[key] = newData[key].map((item: any) => 
-          typeof item === 'object' && item !== null && !(item instanceof Timestamp) 
-          ? convertTimestampsToDates(item) 
+        newData[key] = newData[key].map((item: any) =>
+          typeof item === 'object' && item !== null && !(item instanceof Timestamp)
+          ? convertTimestampsToDates(item)
           : (item instanceof Timestamp ? item.toDate() : item)
         );
       }
@@ -50,45 +49,60 @@ interface AppContextType {
   candidates: Candidate[];
   jobs: Job[];
   userCandidateProfile: Candidate | null;
-  addCandidate: (candidateData: Omit<Candidate, "id" | "userId">) => Promise<Candidate | null>;
-  saveCandidateDataForUser: (userId: string, candidateData: Omit<Candidate, "id" | "userId"> & { userId: string }) => Promise<Candidate | null>;
+  addCandidate: (candidateData: Omit<Candidate, "id" | "userId" | "profileLastUpdatedAt">) => Promise<Candidate | null>;
+  saveCandidateDataForUser: (userId: string, candidateData: Omit<Candidate, "id" | "userId" | "profileLastUpdatedAt"> & { userId: string }) => Promise<Candidate | null>;
   addJob: (jobData: Omit<Job, "id" | "userId" | "createdAt">) => Promise<Job | null>;
   updateCandidate: (candidate: Candidate) => Promise<void>;
   deleteCandidate: (candidateId: string) => Promise<boolean>;
   getCandidateById: (id: string) => Candidate | undefined;
   getJobById: (id: string) => Job | undefined;
   loadingData: boolean;
-  startJobApplication: (job: Job) => Promise<string | null>; // Returns new application ID or null
+  startJobApplication: (job: Job) => Promise<string | null>;
   getJobApplicationById: (applicationId: string) => Promise<JobApplication | null>;
-  updateJobApplication: (applicationId: string, data: Partial<JobApplication>) => Promise<boolean>;
+  updateJobApplication: (applicationId: string, data: Partial<Omit<JobApplication, 'id'>>) => Promise<boolean>;
+  fetchCandidateProfile: (currentAuthUserUid: string) => Promise<Candidate | null>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider = ({ children }: { children: ReactNode }) => {
   const { user } = useAuth();
-  const [candidates, setCandidates] = useState<Candidate[]>([]); // For HR-managed candidates
-  const [userCandidateProfile, setUserCandidateProfile] = useState<Candidate | null>(null); // For logged-in candidate's own profile
+  const [candidates, setCandidates] = useState<Candidate[]>([]);
+  const [userCandidateProfile, setUserCandidateProfile] = useState<Candidate | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loadingData, setLoadingData] = useState(true);
 
-  const fetchCandidateProfile = useCallback(async (currentAuthUserUid: string) => {
-    const candidateProfileRef = doc(db, "candidates", currentAuthUserUid);
-    const candidateProfileSnap = await getDoc(candidateProfileRef);
-    if (candidateProfileSnap.exists()) {
-      const profileData = convertTimestampsToDates({
-        id: candidateProfileSnap.id,
-        ...candidateProfileSnap.data(),
-        userId: currentAuthUserUid
-      }) as Candidate;
-      setUserCandidateProfile(profileData);
-      return profileData;
+  const fetchCandidateProfile = useCallback(async (currentAuthUserUid: string): Promise<Candidate | null> => {
+    if (!db || !currentAuthUserUid) {
+        setUserCandidateProfile(null);
+        return null;
     }
-    setUserCandidateProfile(null);
-    return null;
-  }, []);
+    const candidateProfileRef = doc(db, "candidates", currentAuthUserUid);
+    try {
+        const candidateProfileSnap = await getDoc(candidateProfileRef);
+        if (candidateProfileSnap.exists()) {
+            const profileData = convertTimestampsToDates({
+                id: candidateProfileSnap.id,
+                ...candidateProfileSnap.data(),
+                userId: currentAuthUserUid
+            }) as Candidate;
+            setUserCandidateProfile(profileData);
+            return profileData;
+        }
+        setUserCandidateProfile(null);
+        return null;
+    } catch (error) {
+        console.error("Error fetching candidate profile:", error);
+        setUserCandidateProfile(null);
+        return null;
+    }
+  }, []); // db is stable after init
 
   const fetchData = useCallback(async (currentAuthUser: ReturnType<typeof useAuth>['user']) => {
+    if (!db) {
+        setLoadingData(false);
+        return;
+    }
     setLoadingData(true);
     try {
       const jobsQuery = query(collection(db, "jobs"), orderBy("createdAt", "desc"));
@@ -106,46 +120,50 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       setJobs(fetchedJobs);
 
       if (currentAuthUser) {
-        // Fetch HR-managed candidates (where userId is the HR user's UID AND candidate ID is not the HR user's UID)
         const hrCandidatesQuery = query(collection(db, "candidates"), where("userId", "==", currentAuthUser.uid));
         const hrCandidatesSnapshot = await getDocs(hrCandidatesQuery);
         const fetchedHrCandidates: Candidate[] = hrCandidatesSnapshot.docs
-          .filter(docSnapshot => docSnapshot.id !== currentAuthUser.uid) // Filter out candidate's own profile if HR has same UID as a candidate doc ID
+          .filter(docSnapshot => docSnapshot.id !== currentAuthUser.uid)
           .map(docSnapshot => {
             const data = docSnapshot.data();
             return convertTimestampsToDates({
               id: docSnapshot.id,
               ...data,
             }) as Candidate;
-          });
+          }).sort((a, b) => (b.profileLastUpdatedAt?.getTime() || 0) - (a.profileLastUpdatedAt?.getTime() || 0));
         setCandidates(fetchedHrCandidates);
-
-        // Fetch candidate's own profile (doc ID is their auth UID)
         await fetchCandidateProfile(currentAuthUser.uid);
       } else {
         setCandidates([]);
         setUserCandidateProfile(null);
       }
-
     } catch (error) {
       console.error("Error fetching data from Firestore:", error);
     } finally {
       setLoadingData(false);
     }
-  }, [fetchCandidateProfile]);
+  }, [fetchCandidateProfile]); // db is stable
 
   useEffect(() => {
-    fetchData(user);
+    if (user) {
+        fetchData(user);
+    } else {
+        // Clear data if user logs out
+        setCandidates([]);
+        setJobs([]);
+        setUserCandidateProfile(null);
+        setLoadingData(false);
+    }
   }, [user, fetchData]);
 
-  const addCandidate = async (candidateData: Omit<Candidate, "id" | "userId">): Promise<Candidate | null> => {
+  const addCandidate = useCallback(async (candidateData: Omit<Candidate, "id" | "userId" | "profileLastUpdatedAt">): Promise<Candidate | null> => {
     if (!user || !db) return null;
     try {
       const dataToSave: Omit<Candidate, "id"> = {
         ...candidateData,
-        userId: user.uid, // HR user's UID
-        interviewQuestions: candidateData.interviewQuestions || [],
+        userId: user.uid,
         profileLastUpdatedAt: new Date(),
+        interviewQuestions: candidateData.interviewQuestions || [],
         parsedText: candidateData.parsedText || "",
       };
       const docRef = await addDoc(collection(db, "candidates"), dataToSave);
@@ -156,16 +174,16 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       console.error("Error adding candidate to Firestore (HR):", error);
       return null;
     }
-  };
+  }, [user]); // db and setCandidates are stable
 
-  const saveCandidateDataForUser = async (candidateAuthUid: string, candidateProfileData: Omit<Candidate, "id" | "userId"> & { userId: string }): Promise<Candidate | null> => {
+  const saveCandidateDataForUser = useCallback(async (candidateAuthUid: string, candidateProfileData: Omit<Candidate, "id" | "userId" | "profileLastUpdatedAt"> & { userId: string }): Promise<Candidate | null> => {
     if (!db) return null;
     if (candidateAuthUid !== candidateProfileData.userId) {
       console.error("Mismatch between provided candidateAuthUid and userId in data for saveCandidateDataForUser.");
       return null;
     }
     try {
-      const candidateDocRef = doc(db, "candidates", candidateAuthUid); // Document ID is the candidate's auth UID
+      const candidateDocRef = doc(db, "candidates", candidateAuthUid);
       const dataToSave: Candidate = {
         ...candidateProfileData,
         id: candidateAuthUid,
@@ -173,15 +191,15 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         parsedText: candidateProfileData.parsedText || "",
       };
       await setDoc(candidateDocRef, dataToSave, { merge: true });
-      setUserCandidateProfile(dataToSave); // Update local state for the logged-in candidate
+      setUserCandidateProfile(dataToSave);
       return dataToSave;
     } catch (error) {
       console.error("Error saving candidate data to Firestore (User):", error);
       return null;
     }
-  };
+  }, [setUserCandidateProfile]); // db and setUserCandidateProfile are stable
 
-  const addJob = async (jobData: Omit<Job, "id" | "userId" | "createdAt">): Promise<Job | null> => {
+  const addJob = useCallback(async (jobData: Omit<Job, "id" | "userId" | "createdAt">): Promise<Job | null> => {
     if (!user || !db) return null;
     try {
       const newJobWithTimestamp = {
@@ -203,65 +221,64 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       console.error("Error adding job to Firestore:", error);
       return null;
     }
-  };
+  }, [user, setJobs]); // db and setJobs are stable
 
-  const updateCandidate = async (updatedCandidate: Candidate) => {
+  const updateCandidate = useCallback(async (updatedCandidate: Candidate) => {
     if (!db) return;
     try {
       const candidateRef = doc(db, "candidates", updatedCandidate.id);
       const dataToUpdate = { ...updatedCandidate, profileLastUpdatedAt: new Date() };
-      if ('id' in dataToUpdate) delete (dataToUpdate as any).id; // Firestore handles ID separately
+      if ('id' in dataToUpdate) delete (dataToUpdate as any).id;
 
       await updateDoc(candidateRef, dataToUpdate);
-      
-      // Update HR-managed candidates list
       setCandidates((prev) =>
         prev.map(c => c.id === updatedCandidate.id ? { ...updatedCandidate, profileLastUpdatedAt: (dataToUpdate.profileLastUpdatedAt as Date) } : c)
+           .sort((a, b) => (b.profileLastUpdatedAt?.getTime() || 0) - (a.profileLastUpdatedAt?.getTime() || 0))
       );
-      // Update candidate's own profile if it's them
       if (userCandidateProfile && userCandidateProfile.id === updatedCandidate.id) {
         setUserCandidateProfile({ ...updatedCandidate, profileLastUpdatedAt: (dataToUpdate.profileLastUpdatedAt as Date) });
       }
     } catch (error) {
       console.error("Error updating candidate in Firestore:", error);
     }
-  };
+  }, [setCandidates, userCandidateProfile, setUserCandidateProfile]); // db is stable
 
-  const deleteCandidate = async (candidateId: string): Promise<boolean> => {
+  const deleteCandidate = useCallback(async (candidateId: string): Promise<boolean> => {
     if (!db) return false;
     try {
       const candidateRef = doc(db, "candidates", candidateId);
       await deleteDoc(candidateRef);
       setCandidates((prev) => prev.filter(c => c.id !== candidateId));
       if (userCandidateProfile && userCandidateProfile.id === candidateId) {
-        setUserCandidateProfile(null); // Candidate deleted their own profile
+        setUserCandidateProfile(null);
       }
       return true;
     } catch (error) {
       console.error("Error deleting candidate from Firestore:", error);
       return false;
     }
-  };
+  }, [setCandidates, userCandidateProfile, setUserCandidateProfile]); // db is stable
 
-  const getCandidateById = (id: string) => {
+  const getCandidateById = useCallback((id: string) => {
     if (userCandidateProfile && userCandidateProfile.id === id) return userCandidateProfile;
     return candidates.find(c => c.id === id);
-  };
-  const getJobById = (id: string) => jobs.find(j => j.id === id);
+  }, [userCandidateProfile, candidates]);
 
-  const startJobApplication = async (job: Job): Promise<string | null> => {
+  const getJobById = useCallback((id: string) => jobs.find(j => j.id === id), [jobs]);
+
+  const startJobApplication = useCallback(async (job: Job): Promise<string | null> => {
     if (!user || !db) {
       console.error("User not authenticated to start application.");
       return null;
     }
-    // Ensure candidate profile is loaded before attempting to start an application
     let currentCandidateProfile = userCandidateProfile;
-    if (!currentCandidateProfile) {
+    if (!currentCandidateProfile || !currentCandidateProfile.parsedText) {
+      // Attempt to fetch profile if not loaded or missing parsedText
       currentCandidateProfile = await fetchCandidateProfile(user.uid);
     }
+
     if (!currentCandidateProfile || !currentCandidateProfile.parsedText) {
-      console.error("Candidate profile or resume text not available to start application. Please upload/update resume.");
-      // You might want to throw an error or show a toast here
+      console.error("Candidate profile or resume text not available. Please upload/update resume.");
       return null;
     }
 
@@ -270,12 +287,14 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         candidateId: user.uid,
         candidateNameSnapshot: currentCandidateProfile.candidateName || user.displayName || "N/A",
         candidateEmailSnapshot: currentCandidateProfile.email || user.email || "N/A",
-        candidateResumeTextSnapshot: currentCandidateProfile.parsedText, // Crucial for AI
+        candidateResumeTextSnapshot: currentCandidateProfile.parsedText,
         jobId: job.id,
         jobTitle: job.title,
         jobDescription: job.description,
         status: 'questionnaire_pending',
         appliedAt: Timestamp.fromDate(new Date()),
+        questions: [], // Initialize with empty array
+        answers: [],   // Initialize with empty array
       };
       const docRef = await addDoc(collection(db, "jobApplications"), applicationData);
       return docRef.id;
@@ -283,10 +302,10 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       console.error("Error starting job application:", error);
       return null;
     }
-  };
+  }, [user, userCandidateProfile, fetchCandidateProfile]); // db is stable
 
-  const getJobApplicationById = async (applicationId: string): Promise<JobApplication | null> => {
-    if (!db) return null;
+  const getJobApplicationById = useCallback(async (applicationId: string): Promise<JobApplication | null> => {
+    if (!db || !applicationId) return null;
     try {
       const appRef = doc(db, "jobApplications", applicationId);
       const appSnap = await getDoc(appRef);
@@ -298,28 +317,25 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       console.error("Error fetching job application:", error);
       return null;
     }
-  };
+  }, []); // db is stable
 
-  const updateJobApplication = async (applicationId: string, data: Partial<JobApplication>): Promise<boolean> => {
-    if (!db) return false;
+  const updateJobApplication = useCallback(async (applicationId: string, data: Partial<Omit<JobApplication, 'id'>>): Promise<boolean> => {
+    if (!db || !applicationId) return false;
     try {
       const appRef = doc(db, "jobApplications", applicationId);
       const dataToUpdate = { ...data };
-      // Convert Date objects to Timestamps for Firestore
-      (Object.keys(dataToUpdate) as Array<keyof JobApplication>).forEach(key => {
+      (Object.keys(dataToUpdate) as Array<keyof typeof dataToUpdate>).forEach(key => {
         if (dataToUpdate[key] instanceof Date) {
           (dataToUpdate as any)[key] = Timestamp.fromDate(dataToUpdate[key] as Date);
         }
       });
-
       await updateDoc(appRef, dataToUpdate);
       return true;
     } catch (error) {
       console.error("Error updating job application:", error);
       return false;
     }
-  };
-
+  }, []); // db is stable
 
   return (
     <AppContext.Provider value={{
@@ -337,6 +353,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         startJobApplication,
         getJobApplicationById,
         updateJobApplication,
+        fetchCandidateProfile,
     }}>
       {children}
     </AppContext.Provider>
@@ -350,4 +367,3 @@ export const useAppContext = (): AppContextType => {
   }
   return context;
 };
-
