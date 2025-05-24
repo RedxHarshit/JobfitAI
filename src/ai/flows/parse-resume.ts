@@ -1,3 +1,4 @@
+
 // Use server directive is required when using Genkit flows in react server components.
 'use server';
 
@@ -28,6 +29,7 @@ const ParseResumeOutputSchema = z.object({
   skills: z.array(z.string()).describe('A list of relevant skills extracted from the resume.'),
   experience: z.array(z.string()).describe('A list of key experiences extracted from the resume.'),
   education: z.array(z.string()).describe('A list of education details extracted from the resume.'),
+  parsedText: z.string().describe("The full text content extracted from the resume, as a single string."),
 });
 export type ParseResumeOutput = z.infer<typeof ParseResumeOutputSchema>;
 
@@ -41,7 +43,14 @@ const prompt = ai.definePrompt({
   output: {schema: ParseResumeOutputSchema},
   prompt: `You are an expert resume parser. Your job is to extract key information from resumes.
 
-  Specifically, extract the candidate's name, email, phone number, a list of skills, a list of key experiences, and a list of education details.
+  Specifically, extract:
+  - The candidate's full name.
+  - The candidate's email address (if available).
+  - The candidate's phone number (if available).
+  - A list of relevant skills.
+  - A list of key experiences.
+  - A list of education details.
+  - The full text content of the resume as a single string.
 
   Here is the resume data:
   {{media url=resumeDataUri}}`,
@@ -59,14 +68,19 @@ const parseResumeFlow = ai.defineFlow(
     if (response.errors && response.errors.length > 0) {
       const errorMessages = response.errors.map(e => e.message || String(e)).join(', ');
       console.error('Error from parseResumePrompt:', errorMessages, response.errors);
-      throw new Error(`AI prompt failed: ${errorMessages}`);
+      throw new Error(`AI prompt failed for resume parsing: ${errorMessages}`);
     }
 
     if (!response.output) {
       console.error('ParseResumePrompt returned no output. Full response:', response);
       throw new Error('The AI model did not return the expected output for resume parsing.');
     }
+    if (!response.output.parsedText) {
+      console.warn('ParseResumePrompt output did not contain parsedText. Using empty string as fallback.');
+      response.output.parsedText = ""; // Ensure parsedText is at least an empty string
+    }
     
     return response.output;
   }
 );
+

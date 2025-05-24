@@ -20,7 +20,7 @@ import { useToast } from '@/hooks/use-toast';
 export default function CandidateQuestionnairePage() {
   const params = useParams();
   const router = useRouter();
-  const { getJobApplicationById, updateJobApplication, userCandidateProfile } = useAppContext();
+  const { getJobApplicationById, updateJobApplication } = useAppContext(); // Removed userCandidateProfile from here
   const { toast } = useToast();
   
   const applicationId = typeof params.applicationId === 'string' ? params.applicationId : undefined;
@@ -49,8 +49,13 @@ export default function CandidateQuestionnairePage() {
           setApplication(null);
         } else {
           setApplication(appData);
+          // Use candidateResumeTextSnapshot from the application for generating questions
           if (appData.status === 'questionnaire_pending' && (!appData.questions || appData.questions.length === 0)) {
-            handleGenerateQuestions(appData);
+            if (appData.candidateResumeTextSnapshot && appData.jobDescription) {
+              handleGenerateQuestions(appData, appData.candidateResumeTextSnapshot, appData.jobDescription);
+            } else {
+               setError("Cannot generate questions: Candidate resume snapshot or job description is missing in the application record.");
+            }
           }
           // Initialize answers state if questions already exist
           if (appData.questions && appData.questions.length > 0) {
@@ -70,20 +75,21 @@ export default function CandidateQuestionnairePage() {
     };
 
     fetchApplication();
-  }, [applicationId, getJobApplicationById]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [applicationId, getJobApplicationById]); // Removed handleGenerateQuestions from dependency array as it uses appData directly
 
-  const handleGenerateQuestions = async (appData: JobApplication) => {
-    if (!userCandidateProfile?.parsedText || !appData.jobDescription) {
-      setError("Cannot generate questions: Candidate profile or job description is missing.");
-      return;
-    }
+  const handleGenerateQuestions = async (
+        appData: JobApplication, 
+        candidateResumeText: string, 
+        jobDesc: string
+    ) => {
     if (!applicationId) return;
 
     setGeneratingQuestions(true);
     try {
       const result = await generateQuestionnaireForApplication({
-        candidateResumeText: userCandidateProfile.parsedText,
-        jobDescription: appData.jobDescription,
+        candidateResumeText: candidateResumeText,
+        jobDescription: jobDesc,
       });
       
       if (result && result.questions && result.questions.length > 0) {
@@ -100,6 +106,7 @@ export default function CandidateQuestionnairePage() {
         toast({ title: "Question Generation Failed", description: "Could not generate questions.", variant: "destructive" });
       }
     } catch (e: any) {
+      console.error("Error generating questionnaire:", e);
       setError(e.message || "Error generating questionnaire.");
       toast({ title: "Error", description: e.message || "Error generating questionnaire.", variant: "destructive" });
     } finally {
@@ -261,12 +268,13 @@ export default function CandidateQuestionnairePage() {
             </div>
           )}
           
-          {!generatingQuestions && (!application.questions || application.questions.length === 0) && application.status !== 'questionnaire_pending' && (
+          {!generatingQuestions && (!application.questions || application.questions.length === 0) && application.status !== 'questionnaire_pending' && application.status !== 'questionnaire_in_progress' && (
              <Alert>
                 <Lightbulb className="h-4 w-4" />
                 <AlertTitle>No Questions Yet</AlertTitle>
                 <AlertDescription>
                 Questions for this application are not yet available or couldn't be generated. Please check back or contact support if this persists.
+                If you just landed here, questions might still be generating if your resume and the job description were found.
                 </AlertDescription>
             </Alert>
           )}
@@ -280,3 +288,4 @@ export default function CandidateQuestionnairePage() {
     </div>
   );
 }
+

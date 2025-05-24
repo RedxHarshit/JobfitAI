@@ -77,9 +77,10 @@ export function ResumeUploadForm({
     setError(null);
     setLoading(true);
 
-    const currentUserId = isCandidateMode ? candidateUserId : hrUser?.uid;
-    if (!currentUserId) {
-      setError("User not authenticated. Please log in.");
+    const currentUserIdForAction = isCandidateMode ? candidateUserId : hrUser?.uid;
+    if (!currentUserIdForAction) {
+      const authErrorMsg = "User not authenticated. Please log in.";
+      setError(authErrorMsg);
       toast({
         title: "Authentication Error",
         description: "You must be logged in to perform this action.",
@@ -100,7 +101,10 @@ export function ResumeUploadForm({
       const dataUri = await fileToDataUri(file);
       const parsedData: ParseResumeOutput = await parseResume({ resumeDataUri: dataUri });
       
-      if (isCandidateMode && candidateUserId) {
+      if (isCandidateMode && candidateUserId) { // Candidate mode
+        if(candidateUserId !== currentUserIdForAction) {
+          throw new Error("User ID mismatch in candidate mode.");
+        }
         const candidateProfileData = {
           candidateName: parsedData.candidateName || candidateAuthDisplayName || "N/A",
           email: parsedData.email || candidateAuthEmail,
@@ -109,9 +113,9 @@ export function ResumeUploadForm({
           experience: parsedData.experience || [],
           education: parsedData.education || [],
           resumeFileName: file.name,
-          parsedText: '', // Or actual full text if you decide to store it
+          parsedText: parsedData.parsedText || '', 
           profileLastUpdatedAt: new Date(),
-          userId: candidateUserId, // This ensures the document is linked to the candidate's auth UID
+          userId: candidateUserId,
         };
 
         const updatedCandidate = await saveCandidateDataForUser(candidateUserId, candidateProfileData);
@@ -120,7 +124,7 @@ export function ResumeUploadForm({
             title: "Resume Updated Successfully!",
             description: `Your profile has been updated with the new resume.`,
           });
-          router.push(`/candidate/dashboard`); // Or a dedicated profile view page
+          router.push(`/candidate/dashboard`); 
         } else {
           throw new Error("Failed to update your candidate profile.");
         }
@@ -128,7 +132,7 @@ export function ResumeUploadForm({
       } else { // HR Mode
         const candidateToCreate: Omit<Candidate, "id" | "userId"> = {
           resumeFileName: file.name,
-          parsedText: '', 
+          parsedText: parsedData.parsedText || '', 
           ...parsedData,
           // userId will be hrUser.uid, set by addCandidate
         };
@@ -229,3 +233,4 @@ export function ResumeUploadForm({
     </Card>
   );
 }
+

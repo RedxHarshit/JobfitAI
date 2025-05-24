@@ -30,9 +30,15 @@ const convertTimestampsToDates = (data: DocumentData): any => {
     if (newData[key] instanceof Timestamp) {
       newData[key] = newData[key].toDate();
     } else if (typeof newData[key] === 'object' && newData[key] !== null) {
-      // Recursively convert for nested objects, but not arrays for now
       if (!Array.isArray(newData[key])) {
           newData[key] = convertTimestampsToDates(newData[key] as DocumentData);
+      } else {
+        // If it's an array, iterate and convert Timestamps within objects in the array
+        newData[key] = newData[key].map((item: any) => 
+          typeof item === 'object' && item !== null && !(item instanceof Timestamp) 
+          ? convertTimestampsToDates(item) 
+          : (item instanceof Timestamp ? item.toDate() : item)
+        );
       }
     }
   }
@@ -61,10 +67,26 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider = ({ children }: { children: ReactNode }) => {
   const { user } = useAuth();
-  const [candidates, setCandidates] = useState<Candidate[]>([]);
-  const [userCandidateProfile, setUserCandidateProfile] = useState<Candidate | null>(null);
+  const [candidates, setCandidates] = useState<Candidate[]>([]); // For HR-managed candidates
+  const [userCandidateProfile, setUserCandidateProfile] = useState<Candidate | null>(null); // For logged-in candidate's own profile
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loadingData, setLoadingData] = useState(true);
+
+  const fetchCandidateProfile = useCallback(async (currentAuthUserUid: string) => {
+    const candidateProfileRef = doc(db, "candidates", currentAuthUserUid);
+    const candidateProfileSnap = await getDoc(candidateProfileRef);
+    if (candidateProfileSnap.exists()) {
+      const profileData = convertTimestampsToDates({
+        id: candidateProfileSnap.id,
+        ...candidateProfileSnap.data(),
+        userId: currentAuthUserUid
+      }) as Candidate;
+      setUserCandidateProfile(profileData);
+      return profileData;
+    }
+    setUserCandidateProfile(null);
+    return null;
+  }, []);
 
   const fetchData = useCallback(async (currentAuthUser: ReturnType<typeof useAuth>['user']) => {
     setLoadingData(true);
@@ -84,30 +106,22 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       setJobs(fetchedJobs);
 
       if (currentAuthUser) {
-        // Fetch HR-managed candidates
-        const hrCandidatesQuery = query(collection(db, "candidates"), where("userId", "==", currentAuthUser.uid), where("id", "!=", currentAuthUser.uid));
+        // Fetch HR-managed candidates (where userId is the HR user's UID AND candidate ID is not the HR user's UID)
+        const hrCandidatesQuery = query(collection(db, "candidates"), where("userId", "==", currentAuthUser.uid));
         const hrCandidatesSnapshot = await getDocs(hrCandidatesQuery);
-        const fetchedHrCandidates: Candidate[] = hrCandidatesSnapshot.docs.map(docSnapshot => {
-          const data = docSnapshot.data();
-          return convertTimestampsToDates({
-            id: docSnapshot.id,
-            ...data,
-          }) as Candidate;
-        });
+        const fetchedHrCandidates: Candidate[] = hrCandidatesSnapshot.docs
+          .filter(docSnapshot => docSnapshot.id !== currentAuthUser.uid) // Filter out candidate's own profile if HR has same UID as a candidate doc ID
+          .map(docSnapshot => {
+            const data = docSnapshot.data();
+            return convertTimestampsToDates({
+              id: docSnapshot.id,
+              ...data,
+            }) as Candidate;
+          });
         setCandidates(fetchedHrCandidates);
 
         // Fetch candidate's own profile (doc ID is their auth UID)
-        const candidateProfileRef = doc(db, "candidates", currentAuthUser.uid);
-        const candidateProfileSnap = await getDoc(candidateProfileRef);
-        if (candidateProfileSnap.exists()) {
-          setUserCandidateProfile(convertTimestampsToDates({
-            id: candidateProfileSnap.id,
-            ...candidateProfileSnap.data(),
-            userId: currentAuthUser.uid // Ensure userId is auth UID
-          }) as Candidate);
-        } else {
-          setUserCandidateProfile(null);
-        }
+        await fetchCandidateProfile(currentAuthUser.uid);
       } else {
         setCandidates([]);
         setUserCandidateProfile(null);
@@ -118,7 +132,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     } finally {
       setLoadingData(false);
     }
-  }, []);
+  }, [fetchCandidateProfile]);
 
   useEffect(() => {
     fetchData(user);
@@ -129,9 +143,10 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     try {
       const dataToSave: Omit<Candidate, "id"> = {
         ...candidateData,
-        userId: user.uid,
+        userId: user.uid, // HR user's UID
         interviewQuestions: candidateData.interviewQuestions || [],
         profileLastUpdatedAt: new Date(),
+        parsedText: candidateData.parsedText || "",
       };
       const docRef = await addDoc(collection(db, "candidates"), dataToSave);
       const newCandidate: Candidate = { ...dataToSave, id: docRef.id };
@@ -150,14 +165,15 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       return null;
     }
     try {
-      const candidateDocRef = doc(db, "candidates", candidateAuthUid);
+      const candidateDocRef = doc(db, "candidates", candidateAuthUid); // Document ID is the candidate's auth UID
       const dataToSave: Candidate = {
         ...candidateProfileData,
-        id: candidateAuthUid, // Ensure id is set for type compatibility
+        id: candidateAuthUid,
         profileLastUpdatedAt: new Date(),
+        parsedText: candidateProfileData.parsedText || "",
       };
       await setDoc(candidateDocRef, dataToSave, { merge: true });
-      setUserCandidateProfile(dataToSave);
+      setUserCandidateProfile(dataToSave); // Update local state for the logged-in candidate
       return dataToSave;
     } catch (error) {
       console.error("Error saving candidate data to Firestore (User):", error);
@@ -190,17 +206,21 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const updateCandidate = async (updatedCandidate: Candidate) => {
-    if (!user || !db) return;
+    if (!db) return;
     try {
       const candidateRef = doc(db, "candidates", updatedCandidate.id);
-      const dataToUpdate = { ...updatedCandidate };
-      if ('id' in dataToUpdate) delete (dataToUpdate as any).id;
+      const dataToUpdate = { ...updatedCandidate, profileLastUpdatedAt: new Date() };
+      if ('id' in dataToUpdate) delete (dataToUpdate as any).id; // Firestore handles ID separately
+
       await updateDoc(candidateRef, dataToUpdate);
+      
+      // Update HR-managed candidates list
       setCandidates((prev) =>
-        prev.map(c => c.id === updatedCandidate.id ? updatedCandidate : c)
+        prev.map(c => c.id === updatedCandidate.id ? { ...updatedCandidate, profileLastUpdatedAt: (dataToUpdate.profileLastUpdatedAt as Date) } : c)
       );
+      // Update candidate's own profile if it's them
       if (userCandidateProfile && userCandidateProfile.id === updatedCandidate.id) {
-        setUserCandidateProfile(updatedCandidate);
+        setUserCandidateProfile({ ...updatedCandidate, profileLastUpdatedAt: (dataToUpdate.profileLastUpdatedAt as Date) });
       }
     } catch (error) {
       console.error("Error updating candidate in Firestore:", error);
@@ -208,13 +228,13 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const deleteCandidate = async (candidateId: string): Promise<boolean> => {
-    if (!user || !db) return false;
+    if (!db) return false;
     try {
       const candidateRef = doc(db, "candidates", candidateId);
       await deleteDoc(candidateRef);
       setCandidates((prev) => prev.filter(c => c.id !== candidateId));
       if (userCandidateProfile && userCandidateProfile.id === candidateId) {
-        setUserCandidateProfile(null);
+        setUserCandidateProfile(null); // Candidate deleted their own profile
       }
       return true;
     } catch (error) {
@@ -230,16 +250,27 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const getJobById = (id: string) => jobs.find(j => j.id === id);
 
   const startJobApplication = async (job: Job): Promise<string | null> => {
-    if (!user || !userCandidateProfile || !db) {
-      console.error("User or candidate profile not available to start application.");
+    if (!user || !db) {
+      console.error("User not authenticated to start application.");
       return null;
     }
+    // Ensure candidate profile is loaded before attempting to start an application
+    let currentCandidateProfile = userCandidateProfile;
+    if (!currentCandidateProfile) {
+      currentCandidateProfile = await fetchCandidateProfile(user.uid);
+    }
+    if (!currentCandidateProfile || !currentCandidateProfile.parsedText) {
+      console.error("Candidate profile or resume text not available to start application. Please upload/update resume.");
+      // You might want to throw an error or show a toast here
+      return null;
+    }
+
     try {
       const applicationData: Omit<JobApplication, "id"> = {
         candidateId: user.uid,
-        candidateNameSnapshot: userCandidateProfile.candidateName || user.displayName || "N/A",
-        candidateEmailSnapshot: userCandidateProfile.email || user.email || "N/A",
-        candidateResumeTextSnapshot: userCandidateProfile.parsedText || "", // Important for AI context
+        candidateNameSnapshot: currentCandidateProfile.candidateName || user.displayName || "N/A",
+        candidateEmailSnapshot: currentCandidateProfile.email || user.email || "N/A",
+        candidateResumeTextSnapshot: currentCandidateProfile.parsedText, // Crucial for AI
         jobId: job.id,
         jobTitle: job.title,
         jobDescription: job.description,
@@ -273,20 +304,13 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     if (!db) return false;
     try {
       const appRef = doc(db, "jobApplications", applicationId);
-      // Convert Date objects to Timestamps for Firestore
       const dataToUpdate = { ...data };
-      if (dataToUpdate.appliedAt && dataToUpdate.appliedAt instanceof Date) {
-        dataToUpdate.appliedAt = Timestamp.fromDate(dataToUpdate.appliedAt);
-      }
-      if (dataToUpdate.questionnaireGeneratedAt && dataToUpdate.questionnaireGeneratedAt instanceof Date) {
-        dataToUpdate.questionnaireGeneratedAt = Timestamp.fromDate(dataToUpdate.questionnaireGeneratedAt);
-      }
-      if (dataToUpdate.questionnaireCompletedAt && dataToUpdate.questionnaireCompletedAt instanceof Date) {
-        dataToUpdate.questionnaireCompletedAt = Timestamp.fromDate(dataToUpdate.questionnaireCompletedAt);
-      }
-       if (dataToUpdate.reviewedByHrAt && dataToUpdate.reviewedByHrAt instanceof Date) {
-        dataToUpdate.reviewedByHrAt = Timestamp.fromDate(dataToUpdate.reviewedByHrAt);
-      }
+      // Convert Date objects to Timestamps for Firestore
+      (Object.keys(dataToUpdate) as Array<keyof JobApplication>).forEach(key => {
+        if (dataToUpdate[key] instanceof Date) {
+          (dataToUpdate as any)[key] = Timestamp.fromDate(dataToUpdate[key] as Date);
+        }
+      });
 
       await updateDoc(appRef, dataToUpdate);
       return true;
@@ -326,3 +350,4 @@ export const useAppContext = (): AppContextType => {
   }
   return context;
 };
+
