@@ -6,12 +6,49 @@ import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { useAppContext } from '@/contexts/AppContext';
-import { Briefcase, Eye, ArrowLeft } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
+import { Briefcase, ArrowLeft, PlayCircle, LoaderIcon } from 'lucide-react';
 import { format } from 'date-fns';
 import { Loader } from '@/components/ui/loader';
+import { useRouter } from 'next/navigation';
+import { useToast } from '@/hooks/use-toast';
+import type { Job } from '@/types';
+import { useState } from 'react';
 
 export default function CandidateJobsPage() {
-  const { jobs, loadingData } = useAppContext();
+  const { user } = useAuth();
+  const { jobs, loadingData, startJobApplication, userCandidateProfile } = useAppContext();
+  const router = useRouter();
+  const { toast } = useToast();
+  const [startingApplicationJobId, setStartingApplicationJobId] = useState<string | null>(null);
+
+  const handleStartApplication = async (job: Job) => {
+    if (!user) {
+      toast({ title: "Authentication Required", description: "Please log in to start an application.", variant: "destructive" });
+      router.push('/candidate/login');
+      return;
+    }
+    if (!userCandidateProfile || !userCandidateProfile.resumeFileName) {
+        toast({
+            title: "Resume Required",
+            description: "Please upload your resume before starting an application.",
+            variant: "destructive",
+            action: <Button onClick={() => router.push('/candidate/dashboard/resume-upload')}>Upload Resume</Button>
+        });
+        return;
+    }
+
+    setStartingApplicationJobId(job.id);
+    const applicationId = await startJobApplication(job);
+    setStartingApplicationJobId(null);
+
+    if (applicationId) {
+      toast({ title: "Application Started!", description: `Proceed to the questionnaire for ${job.title}.` });
+      router.push(`/candidate/questionnaire/${applicationId}`);
+    } else {
+      toast({ title: "Failed to Start Application", description: "Could not start the application process. Please try again.", variant: "destructive" });
+    }
+  };
 
   if (loadingData) {
     return (
@@ -64,8 +101,17 @@ export default function CandidateJobsPage() {
                 </p>
               </CardContent>
               <CardFooter>
-                 <Button variant="outline" className="w-full" disabled>
-                  <Eye className="mr-2 h-4 w-4" /> View Details & Apply (Coming Soon)
+                 <Button 
+                    onClick={() => handleStartApplication(job)} 
+                    className="w-full"
+                    disabled={startingApplicationJobId === job.id}
+                  >
+                  {startingApplicationJobId === job.id ? (
+                    <LoaderIcon className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <PlayCircle className="mr-2 h-4 w-4" />
+                  )}
+                  {startingApplicationJobId === job.id ? 'Starting...' : 'Start Application & Questionnaire'}
                 </Button>
               </CardFooter>
             </Card>
