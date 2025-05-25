@@ -11,12 +11,12 @@ export interface InterviewQuestionCategory {
 
 export type CandidateOverallStatus = 
   | 'new' 
-  | 'under_review_hr' 
+  | 'under_review_hr' // Could be set if any application is under review by HR
   | 'contacted' 
-  | 'interview_scheduled' 
+  | 'interview_scheduled' // Set if any application moves to this state
   | 'offer_extended' 
   | 'hired' 
-  | 'rejected_overall';
+  | 'rejected_overall'; // General rejection not tied to a specific app
 
 export interface Candidate extends ParseResumeOutput {
   id: string; 
@@ -49,9 +49,16 @@ export type JobApplicationStatus =
   | 'questionnaire_completed' 
   | 'under_review_hr' 
   | 'rejected_auto' 
-  | 'accepted' 
-  | 'rejected_hr'
+  | 'accepted' // HR accepted, perhaps leading to an interview
+  | 'interview_scheduled' // Interview specifically scheduled
+  | 'rejected_hr' // HR rejected after review
   | 'review_needed_scoring_failed';
+
+export interface InterviewDetails {
+  date: string; // Store as ISO string or YYYY-MM-DD
+  time: string; // e.g., "10:00 AM PST"
+  notes?: string;
+}
 
 export interface JobApplication {
   id: string; 
@@ -73,4 +80,6 @@ export interface JobApplication {
   questionnaireGeneratedAt?: Date | Timestamp;
   questionnaireCompletedAt?: Date | Timestamp;
   reviewedByHrAt?: Date | Timestamp;
+  interviewDetails?: InterviewDetails;
 }
+

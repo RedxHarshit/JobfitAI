@@ -21,7 +21,6 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  // AlertDialogTrigger, // No longer needed here for the list items
 } from "@/components/ui/alert-dialog";
 import type { Candidate } from '@/types';
 
@@ -47,7 +46,7 @@ export default function CandidatesPage() {
         variant: "destructive",
       });
     }
-    setCandidateToDelete(null); // Close dialog
+    setCandidateToDelete(null); 
   };
 
 
@@ -96,28 +95,43 @@ export default function CandidatesPage() {
           {candidates.map((candidate) => (
             <Card key={candidate.id} className="flex flex-col shadow-lg hover:shadow-xl transition-shadow">
               <CardHeader>
-                <div className="flex items-center gap-4">
-                  <Image 
-                    src={`https://placehold.co/64x64.png?text=${candidate.candidateName ? candidate.candidateName[0] : 'C'}`} 
-                    alt={candidate.candidateName || "Candidate"} 
-                    width={64} 
-                    height={64} 
-                    className="rounded-full"
-                    data-ai-hint="person avatar" 
-                  />
-                  <div>
-                    <CardTitle className="text-xl">{candidate.candidateName || "N/A"}</CardTitle>
-                    {candidate.email && (
-                      <CardDescription className="flex items-center gap-1 text-xs">
-                        <Mail size={12} /> {candidate.email}
-                      </CardDescription>
+                <div className="flex items-start justify-between">
+                    <div className="flex items-center gap-4">
+                        <Image 
+                            src={`https://placehold.co/64x64.png?text=${candidate.candidateName ? candidate.candidateName[0] : 'C'}`} 
+                            alt={candidate.candidateName || "Candidate"} 
+                            width={64} 
+                            height={64} 
+                            className="rounded-full"
+                            data-ai-hint="person avatar" 
+                        />
+                        <div>
+                            <CardTitle className="text-xl">{candidate.candidateName || "N/A"}</CardTitle>
+                            {candidate.email && (
+                            <CardDescription className="flex items-center gap-1 text-xs">
+                                <Mail size={12} /> {candidate.email}
+                            </CardDescription>
+                            )}
+                            {candidate.phone && (
+                            <CardDescription className="flex items-center gap-1 text-xs">
+                                <Phone size={12} /> {candidate.phone}
+                            </CardDescription>
+                            )}
+                        </div>
+                    </div>
+                    {candidate.overallStatus && (
+                        <Badge 
+                            variant={
+                                candidate.overallStatus === 'hired' ? 'default' 
+                                : candidate.overallStatus.startsWith('rejected') ? 'destructive' 
+                                : candidate.overallStatus === 'interview_scheduled' ? 'secondary'
+                                : 'outline'
+                            } 
+                            className="text-xs capitalize whitespace-nowrap"
+                        >
+                            {candidate.overallStatus.replace(/_/g, ' ')}
+                        </Badge>
                     )}
-                     {candidate.phone && (
-                      <CardDescription className="flex items-center gap-1 text-xs">
-                        <Phone size={12} /> {candidate.phone}
-                      </CardDescription>
-                    )}
-                  </div>
                 </div>
               </CardHeader>
               <CardContent className="flex-grow space-y-2">
@@ -143,7 +157,6 @@ export default function CandidatesPage() {
                     <Eye className="mr-2 h-4 w-4" /> View Profile
                   </Link>
                 </Button>
-                {/* Changed AlertDialogTrigger to a regular Button */}
                 <Button 
                     variant="destructive" 
                     size="icon" 
@@ -157,7 +170,6 @@ export default function CandidatesPage() {
           ))}
         </div>
       )}
-      {/* This AlertDialog is controlled by the `open` prop and `candidateToDelete` state */}
       <AlertDialog open={!!candidateToDelete} onOpenChange={(open) => !open && setCandidateToDelete(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>

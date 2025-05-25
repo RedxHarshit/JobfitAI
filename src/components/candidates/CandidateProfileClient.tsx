@@ -2,7 +2,7 @@
 // src/components/candidates/CandidateProfileClient.tsx
 "use client";
 
-import type { Candidate, Job, InterviewQuestionCategory, JobApplication, CandidateOverallStatus } from "@/types";
+import type { Candidate, Job, InterviewQuestionCategory, JobApplication, CandidateOverallStatus, InterviewDetails } from "@/types";
 import { useAppContext } from "@/contexts/AppContext";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
@@ -10,7 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Label } from "@/components/ui/label"; // Added import for Label
+import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Loader } from "@/components/ui/loader";
 import { useToast } from "@/hooks/use-toast";
@@ -18,7 +18,7 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 import { useRouter } from "next/navigation"; 
 import { matchCandidateToJob, type MatchCandidateToJobOutput } from "@/ai/flows/match-candidate-to-job";
 import { generateInterviewQuestions } from "@/ai/flows/generate-interview-questions";
-import { UserCircle, FileText, Briefcase, Lightbulb, Sparkles, Brain, AlertTriangle, Trash2, CheckCircle, XCircle, Send, ExternalLink, Clock, Edit3, History, PackageCheck, PackageX, Handshake, MessageSquare, UserCheck, UserX, FileQuestion } from "lucide-react";
+import { UserCircle, FileText, Briefcase, Lightbulb, Sparkles, Brain, AlertTriangle, Trash2, CheckCircle, XCircle, Send, ExternalLink, Clock, Edit3, History, PackageCheck, PackageX, Handshake, MessageSquare, UserCheck, UserX, FileQuestion, CalendarClock } from "lucide-react";
 import Image from "next/image";
 import { Progress } from "@/components/ui/progress";
 import { useAuth } from "@/contexts/AuthContext";
@@ -34,6 +34,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { format } from "date-fns";
+import { ScheduleInterviewDialog } from "@/components/applications/ScheduleInterviewDialog"; // New Import
 
 interface CandidateProfileClientProps {
   candidate: Candidate;
@@ -45,12 +46,10 @@ export function CandidateProfileClient({ candidate: initialCandidate }: Candidat
   const { toast } = useToast();
   const router = useRouter();
 
-  // Use local state for candidate to reflect updates from context or local actions
   const [candidate, setCandidate] = useState<Candidate>(initialCandidate);
    useEffect(() => {
-    setCandidate(initialCandidate); // Update local state if prop changes
+    setCandidate(initialCandidate); 
   }, [initialCandidate]);
-
 
   const [selectedJobId, setSelectedJobId] = useState<string | undefined>(candidate.matchData?.jobId ?? undefined);
   const [customJobDescription, setCustomJobDescription] = useState<string>("");
@@ -68,8 +67,10 @@ export function CandidateProfileClient({ candidate: initialCandidate }: Candidat
 
   const [applications, setApplications] = useState<JobApplication[]>([]);
   const [loadingApplications, setLoadingApplications] = useState(true);
-  const [hrActionLoading, setHrActionLoading] = useState<Record<string, boolean>>({}); // For job app actions
+  const [hrActionLoading, setHrActionLoading] = useState<Record<string, boolean>>({}); 
   const [overallStatusLoading, setOverallStatusLoading] = useState(false);
+  const [isScheduleInterviewDialogOpen, setIsScheduleInterviewDialogOpen] = useState(false);
+  const [applicationToSchedule, setApplicationToSchedule] = useState<JobApplication | null>(null);
 
 
   const candidateResumeText = useMemo(() => {
@@ -98,7 +99,7 @@ export function CandidateProfileClient({ candidate: initialCandidate }: Candidat
     setInterviewQuestions(updatedInitialQuestions);
   }, [candidate.matchData, candidate.interviewQuestions, getJobById]);
 
-  const stableFetchApplications = useCallback(fetchApplicationsForCandidate, []);
+  const stableFetchApplications = useCallback(fetchApplicationsForCandidate, []); // Removed fetchApplicationsForCandidate from deps
   useEffect(() => {
     if (candidate && candidate.id) {
       setLoadingApplications(true);
@@ -138,10 +139,10 @@ export function CandidateProfileClient({ candidate: initialCandidate }: Candidat
       setMatchResult(result);
       const updatedCandidateData: Candidate = { 
         ...candidate, 
-        matchData: { ...result, jobId: useCustomJob ? undefined : selectedJobId! }, // Use undefined for custom job
-        userId: candidate.userId // Keep original userId
+        matchData: { ...result, jobId: useCustomJob ? undefined : selectedJobId! }, 
+        userId: candidate.userId 
       };
-      await updateCandidate(updatedCandidateData); // updateCandidate should handle merging properly
+      await updateCandidate(updatedCandidateData); 
       setCandidate(prev => ({...prev, matchData: updatedCandidateData.matchData}));
       toast({ title: "Matching Complete!", description: `Match score: ${Math.round(result.matchScore * 100)}%` });
     } catch (error: any) {
@@ -203,23 +204,65 @@ export function CandidateProfileClient({ candidate: initialCandidate }: Candidat
     }
   };
 
-  const handleJobApplicationAction = async (applicationId: string, action: 'accepted' | 'rejected_hr') => {
-    setHrActionLoading(prev => ({ ...prev, [applicationId]: true }));
-    const app = applications.find(a => a.id === applicationId);
-    if (!app) {
-      toast({ title: "Error", description: "Application not found.", variant: "destructive" });
-      setHrActionLoading(prev => ({ ...prev, [applicationId]: false }));
-      return;
-    }
+  const handleOpenScheduleDialog = (app: JobApplication) => {
+    setApplicationToSchedule(app);
+    setIsScheduleInterviewDialogOpen(true);
+  };
 
-    const success = await hrUpdateApplicationStatus(applicationId, action, app.candidateEmailSnapshot || "", app.candidateNameSnapshot || "", app.jobTitle);
+  const handleScheduleInterviewSubmit = async (interviewDetails: InterviewDetails) => {
+    if (!applicationToSchedule) return;
+    setHrActionLoading(prev => ({ ...prev, [applicationToSchedule.id]: true }));
+    
+    const success = await hrUpdateApplicationStatus(
+      applicationToSchedule.id, 
+      'interview_scheduled', 
+      applicationToSchedule.candidateEmailSnapshot || "", 
+      applicationToSchedule.candidateNameSnapshot || "", 
+      applicationToSchedule.jobTitle,
+      interviewDetails
+    );
+
     if (success) {
-      toast({ title: "Application Updated", description: `Application for ${app.jobTitle} has been ${action}.` });
-      setApplications(prevApps => prevApps.map(a => a.id === applicationId ? { ...a, status: action, reviewedByHrAt: new Date() } : a));
+      toast({ title: "Interview Scheduled", description: `Interview scheduled for ${applicationToSchedule.candidateNameSnapshot} for ${applicationToSchedule.jobTitle}.` });
+      setApplications(prevApps => prevApps.map(a => 
+        a.id === applicationToSchedule.id 
+        ? { ...a, status: 'interview_scheduled', reviewedByHrAt: new Date(), interviewDetails: interviewDetails } 
+        : a
+      ));
+      // Update candidate's overall status
+      await hrUpdateCandidateOverallStatus(applicationToSchedule.candidateId, 'interview_scheduled', {
+        name: applicationToSchedule.candidateNameSnapshot,
+        email: applicationToSchedule.candidateEmailSnapshot,
+      });
+      // Fetch the latest candidate data to update the overall status badge
+      const updatedCand = await getCandidateById(applicationToSchedule.candidateId);
+      if(updatedCand) setCandidate(updatedCand);
+
     } else {
-      toast({ title: "Update Failed", description: "Could not update application status.", variant: "destructive" });
+      toast({ title: "Scheduling Failed", description: "Could not schedule interview.", variant: "destructive" });
     }
-    setHrActionLoading(prev => ({ ...prev, [applicationId]: false }));
+    setHrActionLoading(prev => ({ ...prev, [applicationToSchedule.id]: false }));
+    setApplicationToSchedule(null);
+  };
+
+  const handleRejectApplication = async (app: JobApplication) => {
+    setHrActionLoading(prev => ({ ...prev, [app.id]: true }));
+    const success = await hrUpdateApplicationStatus(
+      app.id, 
+      'rejected_hr', 
+      app.candidateEmailSnapshot || "", 
+      app.candidateNameSnapshot || "", 
+      app.jobTitle
+    );
+    if (success) {
+      toast({ title: "Application Rejected", description: `Application for ${app.jobTitle} has been rejected.` });
+      setApplications(prevApps => prevApps.map(a => a.id === app.id ? { ...a, status: 'rejected_hr', reviewedByHrAt: new Date() } : a));
+      // Optionally update candidate's overall status if this was the only active application etc.
+      // For now, hrUpdateCandidateOverallStatus is handled separately or upon specific overall rejection.
+    } else {
+      toast({ title: "Rejection Failed", description: "Could not reject application.", variant: "destructive" });
+    }
+    setHrActionLoading(prev => ({ ...prev, [app.id]: false }));
   };
 
   const handleOverallCandidateStatusChange = async (newStatus: CandidateOverallStatus) => {
@@ -235,7 +278,6 @@ export function CandidateProfileClient({ candidate: initialCandidate }: Candidat
   };
 
   const matchScorePercentage = matchResult ? Math.round(matchResult.matchScore * 100) : 0;
-
   const overallStatusOptions: CandidateOverallStatus[] = ['new', 'under_review_hr', 'contacted', 'interview_scheduled', 'offer_extended', 'hired', 'rejected_overall'];
 
   return (
@@ -257,7 +299,15 @@ export function CandidateProfileClient({ candidate: initialCandidate }: Candidat
               {candidate.phone && <CardDescription className="text-md">{candidate.phone}</CardDescription>}
               {candidate.resumeFileName && <CardDescription className="text-sm text-muted-foreground italic mt-1">Resume: {candidate.resumeFileName}</CardDescription>}
               {candidate.overallStatus && (
-                <Badge variant={candidate.overallStatus === 'hired' ? 'default' : candidate.overallStatus === 'rejected_overall' ? 'destructive' : 'secondary'} className="mt-2 text-sm">
+                <Badge 
+                  variant={
+                    candidate.overallStatus === 'hired' ? 'default' 
+                    : candidate.overallStatus === 'rejected_overall' ? 'destructive' 
+                    : candidate.overallStatus === 'interview_scheduled' ? 'secondary'
+                    : 'outline'
+                  } 
+                  className="mt-2 text-sm capitalize"
+                >
                   Overall Status: {candidate.overallStatus.replace(/_/g, ' ')}
                 </Badge>
               )}
@@ -381,11 +431,11 @@ export function CandidateProfileClient({ candidate: initialCandidate }: Candidat
                                                 <CardDescription>Applied on: {format(new Date(app.appliedAt), "PPP")}</CardDescription>
                                             </div>
                                             <Badge variant={
-                                                app.status === 'accepted' || app.status === 'hired' ? 'default' 
+                                                app.status === 'accepted' || app.status === 'hired' || app.status === 'interview_scheduled' ? 'default' 
                                                 : app.status.startsWith('rejected') ? 'destructive' 
                                                 : app.status === 'under_review_hr' ? 'secondary'
                                                 : 'outline'
-                                            } className="capitalize">
+                                            } className="capitalize text-xs px-2 py-1">
                                                 {app.status.replace(/_/g, ' ')}
                                             </Badge>
                                         </div>
@@ -403,6 +453,14 @@ export function CandidateProfileClient({ candidate: initialCandidate }: Candidat
                                                 <h4 className="font-semibold text-sm">AI Justification:</h4>
                                                 <p className="text-xs text-muted-foreground whitespace-pre-line line-clamp-3">{app.scoreJustification}</p>
                                             </div>
+                                        )}
+                                         {app.status === 'interview_scheduled' && app.interviewDetails && (
+                                          <Card className="bg-muted/50 p-3">
+                                            <CardTitle className="text-sm flex items-center gap-2 mb-1"><CalendarClock size={16} className="text-primary"/> Interview Scheduled</CardTitle>
+                                            <p className="text-xs"><strong>Date:</strong> {app.interviewDetails.date}</p>
+                                            <p className="text-xs"><strong>Time:</strong> {app.interviewDetails.time}</p>
+                                            {app.interviewDetails.notes && <p className="text-xs"><strong>Notes:</strong> {app.interviewDetails.notes}</p>}
+                                          </Card>
                                         )}
                                         {app.questions && app.questions.length > 0 && (
                                           <Accordion type="single" collapsible className="w-full text-sm">
@@ -425,19 +483,19 @@ export function CandidateProfileClient({ candidate: initialCandidate }: Candidat
                                             <Button 
                                                 size="sm" 
                                                 variant="outline"
-                                                onClick={() => handleJobApplicationAction(app.id, 'rejected_hr')}
+                                                onClick={() => handleRejectApplication(app)}
                                                 disabled={hrActionLoading[app.id]}
                                             >
-                                                {hrActionLoading[app.id] && hrActionLoading[app.id] === true ? <Loader size={16} className="mr-2" /> : <XCircle className="mr-2 h-4 w-4" />}
-                                                Reject Application
+                                                {hrActionLoading[app.id] ? <Loader size={16} className="mr-2" /> : <XCircle className="mr-2 h-4 w-4" />}
+                                                Reject
                                             </Button>
                                             <Button 
                                                 size="sm"
-                                                onClick={() => handleJobApplicationAction(app.id, 'accepted')}
+                                                onClick={() => handleOpenScheduleDialog(app)}
                                                 disabled={hrActionLoading[app.id]}
                                             >
-                                                 {hrActionLoading[app.id] && hrActionLoading[app.id] === true ? <Loader size={16} className="mr-2" /> : <CheckCircle className="mr-2 h-4 w-4" />}
-                                                Accept Application
+                                                 {hrActionLoading[app.id] ? <Loader size={16} className="mr-2" /> : <CheckCircle className="mr-2 h-4 w-4" />}
+                                                Accept & Schedule Interview
                                             </Button>
                                         </CardFooter>
                                     )}
@@ -575,6 +633,15 @@ export function CandidateProfileClient({ candidate: initialCandidate }: Candidat
           </Card>
         </TabsContent>
       </Tabs>
+      {applicationToSchedule && (
+        <ScheduleInterviewDialog
+          open={isScheduleInterviewDialogOpen}
+          onOpenChange={setIsScheduleInterviewDialogOpen}
+          onSubmit={handleScheduleInterviewSubmit}
+          candidateName={applicationToSchedule.candidateNameSnapshot}
+          jobTitle={applicationToSchedule.jobTitle}
+        />
+      )}
     </div>
   );
 }
