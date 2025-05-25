@@ -1,4 +1,3 @@
-
 // src/app/candidate/layout.tsx
 import type { ReactNode } from 'react';
 import { BrainCircuit } from 'lucide-react';
@@ -11,7 +10,7 @@ export default function CandidateLayout({ children }: { children: ReactNode }) {
       <header className="sticky top-0 z-10 flex items-center justify-between h-16 px-4 sm:px-6 bg-background/80 backdrop-blur-sm border-b">
         <Link href="/candidate/dashboard" className="flex items-center gap-2">
           <BrainCircuit color="hsl(var(--primary))" style={{ width: '28px', height: '28px' }} />
-          <span className="font-bold text-2xl text-primary">TalentFlow AI - Candidate Portal</span>
+          <span className="font-bold text-2xl text-primary">JobFit AI - Candidate Portal</span>
         </Link>
         <AuthButton /> {/* This will show user avatar & logout if logged in */}
       </header>
@@ -19,7 +18,7 @@ export default function CandidateLayout({ children }: { children: ReactNode }) {
         {children}
       </main>
       <footer className="p-4 text-center text-xs text-muted-foreground border-t">
-        &copy; {new Date().getFullYear()} TalentFlow AI. All rights reserved.
+        &copy; {new Date().getFullYear()} JobFit AI. All rights reserved.
       </footer>
     </div>
   );

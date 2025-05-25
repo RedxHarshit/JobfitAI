@@ -1,4 +1,3 @@
-
 // src/components/auth/CandidateLoginForm.tsx
 "use client";
 
@@ -116,7 +115,7 @@ export function CandidateLoginForm() {
       <Card className="w-full max-w-md shadow-xl">
         <CardHeader className="text-center">
           <CardTitle className="text-3xl font-bold text-primary">
-            Candidate Portal Login
+            JobFit AI Candidate Login
           </CardTitle>
           <CardDescription>
             Access your applications and profile.

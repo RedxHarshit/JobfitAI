@@ -38,7 +38,7 @@ export default function DashboardPage() {
     <div className="space-y-8">
       <Card className="shadow-lg">
         <CardHeader className="text-center pb-4"> {/* Added text-center and adjusted padding */}
-          <CardTitle className="text-3xl font-bold">Welcome to TalentFlow AI</CardTitle>
+          <CardTitle className="text-3xl font-bold">Welcome to JobFit AI</CardTitle>
           <CardDescription className="text-lg">
             Streamline your recruitment process with the power of AI.
           </CardDescription>
@@ -46,7 +46,7 @@ export default function DashboardPage() {
         <CardContent className="p-6"> {/* Ensured standard padding */}
           <div className="flex flex-col items-center text-center space-y-6"> {/* Centering content */}
             <p className="text-muted-foreground leading-relaxed max-w-xl"> {/* max-w for better text flow */}
-              TalentFlow AI helps you find the best talent faster by leveraging artificial intelligence for resume parsing, candidate matching, and interview preparation. Get started by uploading a resume or posting a new job.
+              JobFit AI helps you find the best talent faster by leveraging artificial intelligence for resume parsing, candidate matching, and interview preparation. Get started by uploading a resume or posting a new job.
             </p>
             <div className="flex flex-wrap gap-4 justify-center"> {/* Centered buttons, added flex-wrap */}
               <Button asChild size="lg">

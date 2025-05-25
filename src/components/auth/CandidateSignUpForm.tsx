@@ -1,4 +1,3 @@
-
 // src/components/auth/CandidateSignUpForm.tsx
 "use client";
 
@@ -103,10 +102,10 @@ export function CandidateSignUpForm() {
       <Card className="w-full max-w-md shadow-xl">
         <CardHeader className="text-center">
           <CardTitle className="text-3xl font-bold text-primary">
-            Candidate Sign Up
+            JobFit AI Candidate Sign Up
           </CardTitle>
           <CardDescription>
-            Create your TalentFlow AI candidate account.
+            Create your JobFit AI candidate account.
           </CardDescription>
         </CardHeader>
         <CardContent>

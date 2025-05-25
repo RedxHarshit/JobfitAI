@@ -17,7 +17,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'TalentFlow AI',
+  title: 'JobFit AI',
   description: 'AI-Powered Recruitment Platform',
 };
 

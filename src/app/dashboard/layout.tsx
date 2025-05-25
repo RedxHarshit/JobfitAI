@@ -92,7 +92,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
           <div className="flex items-center gap-2">
             <SidebarTrigger className="md:hidden" /> {/* Only show on mobile */}
             <span className="text-xl font-semibold text-foreground">
-              {navItems.find(item => pathname.startsWith(item.href) && (item.href !== "/dashboard" || pathname === "/dashboard"))?.label || "TalentFlow AI"}
+              {navItems.find(item => pathname.startsWith(item.href) && (item.href !== "/dashboard" || pathname === "/dashboard"))?.label || "JobFit AI"}
             </span>
           </div>
           <AuthButton />

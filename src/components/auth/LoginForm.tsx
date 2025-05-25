@@ -1,4 +1,3 @@
-
 // src/components/auth/LoginForm.tsx
 "use client";
 
@@ -40,7 +39,8 @@ export function LoginForm() {
   const { 
     signIn, 
     signUp, 
-    sendPasswordReset, 
+    sendPasswordReset,
+    sendVerificationEmail, 
     error: authError, 
     loading 
   } = useAuth();
@@ -76,6 +76,7 @@ export function LoginForm() {
       const { email, password } = data as EmailSignUpFormValues;
       const newUser = await signUp({ email, password });
       if (newUser) {
+        await sendVerificationEmail(newUser);
         toast({
           title: "Account Created!",
           description: "Please check your email to verify your account.",
@@ -123,10 +124,10 @@ export function LoginForm() {
       <Card className="w-full max-w-md shadow-2xl">
         <CardHeader className="text-center">
           <CardTitle className="text-3xl font-bold text-primary">
-            {isSignUp ? "Create Account" : "Welcome!"}
+            {isSignUp ? "Create HR Account" : "Welcome to JobFit AI!"}
           </CardTitle>
           <CardDescription>
-            {isSignUp ? "Join TalentFlow AI today." : "Sign in to access your dashboard."}
+            {isSignUp ? "Join JobFit AI today." : "Sign in to access your HR dashboard."}
           </CardDescription>
         </CardHeader>
         <CardContent>

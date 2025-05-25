@@ -7,7 +7,7 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/
 
 export default function HelpPage() {
   const supportEmail = "harshit14012018@gmail.com";
-  const gmailComposeUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${supportEmail}`;
+  const gmailComposeUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${supportEmail}&su=JobFit AI Support`;
 
   return (
     <div className="space-y-6">
@@ -27,7 +27,7 @@ export default function HelpPage() {
         <CardHeader>
           <CardTitle>Get Help</CardTitle>
           <CardDescription>
-            Find answers to your questions and learn more about TalentFlow AI.
+            Find answers to your questions and learn more about JobFit AI.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
