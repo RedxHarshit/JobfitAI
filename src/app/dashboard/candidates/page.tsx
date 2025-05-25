@@ -124,7 +124,7 @@ export default function CandidatesPage() {
                             variant={
                                 candidate.overallStatus === 'hired' ? 'default' 
                                 : candidate.overallStatus.startsWith('rejected') ? 'destructive' 
-                                : candidate.overallStatus === 'interview_scheduled' ? 'secondary'
+                                : candidate.overallStatus === 'interview_scheduled' || candidate.overallStatus === 'offer_extended' ? 'secondary'
                                 : 'outline'
                             } 
                             className="text-xs capitalize whitespace-nowrap"

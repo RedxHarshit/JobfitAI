@@ -7,22 +7,32 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { useAppContext } from '@/contexts/AppContext';
 import { useAuth } from '@/contexts/AuthContext';
-import { Briefcase, ArrowLeft, PlayCircle, LoaderIcon } from 'lucide-react';
+import { Briefcase, ArrowLeft, PlayCircle, LoaderIcon, CheckCircle } from 'lucide-react';
 import { format } from 'date-fns';
 import { Loader } from '@/components/ui/loader';
 import { useRouter } from 'next/navigation';
 import { useToast } from '@/hooks/use-toast';
-import type { Job } from '@/types';
-import { useState } from 'react';
+import type { Job, JobApplication } from '@/types';
+import { useState, useMemo } from 'react';
 
 export default function CandidateJobsPage() {
   const { user } = useAuth();
-  const { jobs, loadingData, startJobApplication, userCandidateProfile } = useAppContext();
+  const { jobs, loadingData, startJobApplication, userCandidateProfile, allJobApplications } = useAppContext();
   const router = useRouter();
   const { toast } = useToast();
   const [startingApplicationJobId, setStartingApplicationJobId] = useState<string | null>(null);
 
-  const handleStartApplication = async (job: Job) => {
+  const candidateApplicationsMap = useMemo(() => {
+    if (!user || !allJobApplications) return new Map<string, JobApplication>();
+    const map = new Map<string, JobApplication>();
+    allJobApplications
+      .filter(app => app.candidateId === user.uid)
+      .forEach(app => map.set(app.jobId, app));
+    return map;
+  }, [allJobApplications, user]);
+
+
+  const handleStartOrViewApplication = async (job: Job, existingApplication?: JobApplication) => {
     if (!user) {
       toast({ title: "Authentication Required", description: "Please log in to start an application.", variant: "destructive" });
       router.push('/candidate/login');
@@ -38,12 +48,21 @@ export default function CandidateJobsPage() {
         return;
     }
 
+    if (existingApplication) {
+      router.push(`/candidate/questionnaire/${existingApplication.id}`);
+      return;
+    }
+
     setStartingApplicationJobId(job.id);
-    const applicationId = await startJobApplication(job);
+    const { applicationId, isNew } = await startJobApplication(job);
     setStartingApplicationJobId(null);
 
     if (applicationId) {
-      toast({ title: "Application Started!", description: `Proceed to the questionnaire for ${job.title}.` });
+      if (isNew) {
+        toast({ title: "Application Started!", description: `Proceed to the questionnaire for ${job.title}.` });
+      } else {
+        toast({ title: "Application Already Exists", description: `Resuming application for ${job.title}.` });
+      }
       router.push(`/candidate/questionnaire/${applicationId}`);
     } else {
       toast({ title: "Failed to Start Application", description: "Could not start the application process. Please try again.", variant: "destructive" });
@@ -87,35 +106,45 @@ export default function CandidateJobsPage() {
         </Card>
       ) : (
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-          {jobs.map((job) => (
-            <Card key={job.id} className="flex flex-col shadow-lg hover:shadow-xl transition-shadow">
-              <CardHeader>
-                <CardTitle className="text-xl truncate" title={job.title}>{job.title}</CardTitle>
-                <CardDescription>
-                  Posted on: {format(new Date(job.createdAt), "PPP")}
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="flex-grow">
-                <p className="text-sm text-muted-foreground line-clamp-4">
-                  {job.description}
-                </p>
-              </CardContent>
-              <CardFooter>
-                 <Button 
-                    onClick={() => handleStartApplication(job)} 
-                    className="w-full"
-                    disabled={startingApplicationJobId === job.id}
-                  >
-                  {startingApplicationJobId === job.id ? (
-                    <LoaderIcon className="mr-2 h-4 w-4 animate-spin" />
-                  ) : (
-                    <PlayCircle className="mr-2 h-4 w-4" />
-                  )}
-                  {startingApplicationJobId === job.id ? 'Starting...' : 'Start Application & Questionnaire'}
-                </Button>
-              </CardFooter>
-            </Card>
-          ))}
+          {jobs.map((job) => {
+            const existingApplication = candidateApplicationsMap.get(job.id);
+            const hasApplied = !!existingApplication;
+            
+            return (
+              <Card key={job.id} className="flex flex-col shadow-lg hover:shadow-xl transition-shadow">
+                <CardHeader>
+                  <CardTitle className="text-xl truncate" title={job.title}>{job.title}</CardTitle>
+                  <CardDescription>
+                    Posted on: {format(new Date(job.createdAt), "PPP")}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="flex-grow">
+                  <p className="text-sm text-muted-foreground line-clamp-4">
+                    {job.description}
+                  </p>
+                </CardContent>
+                <CardFooter>
+                   <Button 
+                      onClick={() => handleStartOrViewApplication(job, existingApplication)} 
+                      className="w-full"
+                      disabled={startingApplicationJobId === job.id}
+                      variant={hasApplied ? "secondary" : "default"}
+                    >
+                    {startingApplicationJobId === job.id ? (
+                      <LoaderIcon className="mr-2 h-4 w-4 animate-spin" />
+                    ) : hasApplied ? (
+                      <CheckCircle className="mr-2 h-4 w-4" />
+                    ) : (
+                      <PlayCircle className="mr-2 h-4 w-4" />
+                    )}
+                    {startingApplicationJobId === job.id ? 'Starting...' 
+                      : hasApplied ? (existingApplication?.status === 'questionnaire_completed' || existingApplication?.status.startsWith('rejected') || existingApplication?.status === 'under_review_hr' || existingApplication?.status === 'accepted' || existingApplication?.status === 'interview_scheduled' ? 'View Application Status' : 'Continue Application')
+                      : 'Start Application & Questionnaire'}
+                  </Button>
+                </CardFooter>
+              </Card>
+            );
+          })}
         </div>
       )}
     </div>
