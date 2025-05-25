@@ -208,6 +208,13 @@ export default function CandidateQuestionnairePage() {
           } else {
             finalStatus = 'under_review_hr';
             console.log(`[QuestionnairePage] Application for App ID ${applicationId} (Candidate: ${candidateEmailForNotification || 'N/A'}) scored ${scoringResult.score}. Status set to under_review_hr. Simulating HR notification.`);
+            // Update candidate's overall status to 'under_review_hr'
+            await stableHrUpdateCandidateOverallStatus(
+              application.candidateId,
+              'under_review_hr',
+              { email: candidateEmailForNotification, name: candidateNameForNotification }
+            );
+            console.log(`[QuestionnairePage] Candidate ${application.candidateId} overall status updated to under_review_hr.`);
           }
         } else {
             console.error("[QuestionnairePage] Invalid scoring result from AI:", scoringResult);
