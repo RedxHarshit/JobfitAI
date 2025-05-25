@@ -23,7 +23,7 @@ import { useAuth } from '@/contexts/AuthContext';
 export default function CandidateQuestionnairePage() {
   const params = useParams();
   const router = useRouter();
-  const { getJobApplicationById, updateJobApplication, hrUpdateCandidateOverallStatus } = useAppContext(); // Added hrUpdateCandidateOverallStatus
+  const { getJobApplicationById, updateJobApplication, hrUpdateCandidateOverallStatus } = useAppContext();
   const { toast } = useToast();
   const { user } = useAuth();
 
@@ -36,9 +36,9 @@ export default function CandidateQuestionnairePage() {
   const [submitting, setSubmitting] = useState(false);
   const [answers, setAnswers] = useState<Record<string, string>>({});
 
-  const stableGetJobApplicationById = useCallback(getJobApplicationById, []); // Removed getJobApplicationById from deps
-  const stableUpdateJobApplication = useCallback(updateJobApplication, []); // Removed updateJobApplication from deps
-  const stableHrUpdateCandidateOverallStatus = useCallback(hrUpdateCandidateOverallStatus, []); // Added
+  const stableGetJobApplicationById = useCallback(getJobApplicationById, []);
+  const stableUpdateJobApplication = useCallback(updateJobApplication, []);
+  const stableHrUpdateCandidateOverallStatus = useCallback(hrUpdateCandidateOverallStatus, []);
 
 
   useEffect(() => {
@@ -139,7 +139,7 @@ export default function CandidateQuestionnairePage() {
   };
 
   const handleSubmitQuestionnaire = async () => {
-    if (!applicationId || !application || !application.questions || !user) { // Added !user check
+    if (!applicationId || !application || !application.questions || !user) { 
         toast({ title: "Error", description: "Application data not loaded or user not authenticated.", variant: "destructive" });
         return;
     }
@@ -208,7 +208,6 @@ export default function CandidateQuestionnairePage() {
           } else {
             finalStatus = 'under_review_hr';
             console.log(`[QuestionnairePage] Application for App ID ${applicationId} (Candidate: ${candidateEmailForNotification || 'N/A'}) scored ${scoringResult.score}. Status set to under_review_hr. Simulating HR notification.`);
-            // HR notification simulation (console.log for now)
           }
         } else {
             console.error("[QuestionnairePage] Invalid scoring result from AI:", scoringResult);
@@ -282,7 +281,10 @@ export default function CandidateQuestionnairePage() {
     );
   }
 
-  if (application.status !== 'questionnaire_pending' && application.status !== 'questionnaire_in_progress') {
+  // If application status is not 'pending' or 'in_progress', show a generic message
+  const isQuestionnaireActive = application.status === 'questionnaire_pending' || application.status === 'questionnaire_in_progress';
+
+  if (!isQuestionnaireActive) {
     return (
       <div className="max-w-3xl mx-auto space-y-6 text-center">
          <Button asChild variant="outline" className="mb-6 mr-auto block">
@@ -293,11 +295,11 @@ export default function CandidateQuestionnairePage() {
         <Card className="shadow-lg">
             <CardHeader>
                 <CheckCircle className="mx-auto h-12 w-12 text-green-500" />
-                <CardTitle className="text-2xl mt-4">Questionnaire Status: {application.status.replace(/_/g, ' ')}</CardTitle>
+                <CardTitle className="text-2xl mt-4">Application Processed</CardTitle>
             </CardHeader>
             <CardContent>
-                <p className="text-muted-foreground">You have already submitted or this questionnaire is past the pending stage for "{application.jobTitle}".</p>
-                <p className="mt-2 text-muted-foreground">We will be in touch regarding the next steps if applicable.</p>
+                <p className="text-muted-foreground">Thank you for applying for "{application.jobTitle}".</p>
+                <p className="mt-2 text-muted-foreground">Your application is being processed. We will update you on the status via email.</p>
             </CardContent>
             <CardFooter className="justify-center">
                 <Button asChild>
@@ -306,7 +308,7 @@ export default function CandidateQuestionnairePage() {
             </CardFooter>
         </Card>
       </div>
-    )
+    );
   }
 
 
