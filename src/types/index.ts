@@ -9,46 +9,66 @@ export interface InterviewQuestionCategory {
   questions: string[];
 }
 
+export type CandidateOverallStatus = 
+  | 'new' 
+  | 'under_review_hr' 
+  | 'contacted' 
+  | 'interview_scheduled' 
+  | 'offer_extended' 
+  | 'hired' 
+  | 'rejected_overall';
+
 export interface Candidate extends ParseResumeOutput {
-  id: string; // For HR-added candidates, this is Firestore's auto-ID. For candidates managing their own, this is their auth.uid.
-  userId: string; // For HR-added, this is HR's auth.uid. For candidate-managed, this is candidate's auth.uid.
+  id: string; 
+  userId: string; 
   resumeFileName?: string;
-  parsedText?: string; // Full text of the resume for AI processing
+  parsedText?: string; 
   matchData?: MatchCandidateToJobOutput & { jobId: string | null };
   interviewQuestions?: InterviewQuestionCategory[];
   profileLastUpdatedAt?: Date;
+  overallStatus?: CandidateOverallStatus;
+  overallStatusLastUpdatedAt?: Date | Timestamp;
 }
 
 export interface Job {
   id:string;
-  userId: string; // HR User UID who created the job
+  userId: string; 
   title: string;
   description: string;
   createdAt: Date;
 }
 
 export interface AIQuestion {
-  id: string; // Unique ID for the question
+  id: string; 
   text: string;
-  // type: 'text' | 'multiple-choice' | 'rating'; // For future expansion
-  // options?: string[]; // For multiple-choice
 }
 
+export type JobApplicationStatus = 
+  | 'questionnaire_pending' 
+  | 'questionnaire_in_progress' 
+  | 'questionnaire_completed' 
+  | 'under_review_hr' 
+  | 'rejected_auto' 
+  | 'accepted' 
+  | 'rejected_hr'
+  | 'review_needed_scoring_failed';
+
 export interface JobApplication {
-  id: string; // Firestore document ID
-  candidateId: string; // Candidate's auth UID
-  candidateNameSnapshot?: string; // Candidate's name at time of application
-  candidateEmailSnapshot?: string; // Candidate's email at time of application
-  candidateResumeTextSnapshot?: string; // Snapshot of resume text
+  id: string; 
+  candidateId: string; 
+  candidateNameSnapshot?: string; 
+  candidateEmailSnapshot?: string; 
+  candidateResumeTextSnapshot?: string; 
   jobId: string;
   jobTitle: string;
-  jobDescription: string; // Snapshot of job description
-  status: 'questionnaire_pending' | 'questionnaire_in_progress' | 'questionnaire_completed' | 'under_review' | 'rejected' | 'hired';
-  questions?: AIQuestion[]; // Generated AI questions
+  jobDescription: string; 
+  status: JobApplicationStatus;
+  questions?: AIQuestion[]; 
   answers?: { questionId: string; answerText: string }[];
   score?: number;
-  feedbackToCandidate?: string; // General feedback message for the candidate
-  rejectionReason?: string; // If rejected by HR or automatically
+  scoreJustification?: string;
+  feedbackToCandidate?: string; 
+  rejectionReason?: string; 
   appliedAt: Date | Timestamp;
   questionnaireGeneratedAt?: Date | Timestamp;
   questionnaireCompletedAt?: Date | Timestamp;

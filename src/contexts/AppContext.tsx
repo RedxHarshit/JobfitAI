@@ -2,7 +2,7 @@
 // src/contexts/AppContext.tsx
 "use client";
 
-import type { Candidate, Job, JobApplication, AIQuestion } from "@/types";
+import type { Candidate, Job, JobApplication, AIQuestion, CandidateOverallStatus } from "@/types";
 import { createContext, useContext, useState, ReactNode, useEffect, useCallback } from "react";
 import { db } from "@/lib/firebase";
 import {
@@ -49,8 +49,8 @@ interface AppContextType {
   candidates: Candidate[];
   jobs: Job[];
   userCandidateProfile: Candidate | null;
-  addCandidate: (candidateData: Omit<Candidate, "id" | "userId" | "profileLastUpdatedAt">) => Promise<Candidate | null>;
-  saveCandidateDataForUser: (userId: string, candidateData: Omit<Candidate, "id" | "userId" | "profileLastUpdatedAt"> & { userId: string }) => Promise<Candidate | null>;
+  addCandidate: (candidateData: Omit<Candidate, "id" | "userId" | "profileLastUpdatedAt" | "overallStatus" | "overallStatusLastUpdatedAt">) => Promise<Candidate | null>;
+  saveCandidateDataForUser: (userId: string, candidateData: Omit<Candidate, "id" | "userId" | "profileLastUpdatedAt" | "overallStatus" | "overallStatusLastUpdatedAt"> & { userId: string }) => Promise<Candidate | null>;
   addJob: (jobData: Omit<Job, "id" | "userId" | "createdAt">) => Promise<Job | null>;
   updateCandidate: (candidate: Candidate) => Promise<void>;
   deleteCandidate: (candidateId: string) => Promise<boolean>;
@@ -63,6 +63,7 @@ interface AppContextType {
   fetchCandidateProfile: (currentAuthUserUid: string) => Promise<Candidate | null>;
   fetchApplicationsForCandidate: (candidateId: string) => Promise<JobApplication[]>;
   hrUpdateApplicationStatus: (applicationId: string, newStatus: 'accepted' | 'rejected_hr', candidateEmail: string, candidateName: string, jobTitle: string) => Promise<boolean>;
+  hrUpdateCandidateOverallStatus: (candidateId: string, newStatus: CandidateOverallStatus, candidateDetails: { email?: string, name?: string }) => Promise<boolean>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -86,7 +87,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
             const profileData = convertTimestampsToDates({
                 id: candidateProfileSnap.id,
                 ...candidateProfileSnap.data(),
-                userId: currentAuthUserUid // Ensure userId is the auth UID for self-profile
+                userId: currentAuthUserUid 
             }) as Candidate;
             setUserCandidateProfile(profileData);
             return profileData;
@@ -122,7 +123,6 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       setJobs(fetchedJobs);
 
       if (currentAuthUser) {
-        // Fetch ALL candidates for the HR portal view
         const allCandidatesQuery = query(collection(db, "candidates"), orderBy("profileLastUpdatedAt", "desc"));
         const allCandidatesSnapshot = await getDocs(allCandidatesQuery);
         const fetchedCandidatesList: Candidate[] = allCandidatesSnapshot.docs.map(docSnapshot => {
@@ -132,12 +132,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
           }) as Candidate;
         });
         setCandidates(fetchedCandidatesList);
-
-        // Fetch the specific candidate profile if the logged-in user IS a candidate
-        // This populates userCandidateProfile, used by the /candidate portal
         await fetchCandidateProfile(currentAuthUser.uid);
       } else {
-        // No user logged in
         setCandidates([]);
         setUserCandidateProfile(null);
       }
@@ -149,18 +145,20 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   }, [fetchCandidateProfile]); 
 
   useEffect(() => {
-    fetchData(user); // Pass user to fetchData
+    fetchData(user);
   }, [user, fetchData]);
 
-  const addCandidate = useCallback(async (candidateData: Omit<Candidate, "id" | "userId" | "profileLastUpdatedAt">): Promise<Candidate | null> => {
+  const addCandidate = useCallback(async (candidateData: Omit<Candidate, "id" | "userId" | "profileLastUpdatedAt" | "overallStatus" | "overallStatusLastUpdatedAt">): Promise<Candidate | null> => {
     if (!user || !db) return null;
     try {
       const dataToSave: Omit<Candidate, "id"> = {
         ...candidateData,
-        userId: user.uid, // HR's UID
+        userId: user.uid, 
         profileLastUpdatedAt: new Date(),
         interviewQuestions: candidateData.interviewQuestions || [],
         parsedText: candidateData.parsedText || "",
+        overallStatus: 'new',
+        overallStatusLastUpdatedAt: new Date(),
       };
       const docRef = await addDoc(collection(db, "candidates"), dataToSave);
       const newCandidate: Candidate = { ...dataToSave, id: docRef.id };
@@ -172,28 +170,35 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     }
   }, [user]);
 
-  const saveCandidateDataForUser = useCallback(async (candidateAuthUid: string, candidateProfileData: Omit<Candidate, "id" | "userId" | "profileLastUpdatedAt"> & { userId: string }): Promise<Candidate | null> => {
+  const saveCandidateDataForUser = useCallback(async (candidateAuthUid: string, candidateProfileData: Omit<Candidate, "id" | "userId" | "profileLastUpdatedAt" | "overallStatus" | "overallStatusLastUpdatedAt"> & { userId: string }): Promise<Candidate | null> => {
     if (!db) return null;
     if (candidateAuthUid !== candidateProfileData.userId) {
       console.error("Mismatch between provided candidateAuthUid and userId in data for saveCandidateDataForUser.");
       return null;
     }
     try {
-      const candidateDocRef = doc(db, "candidates", candidateAuthUid); // Doc ID is candidate's auth UID
+      const candidateDocRef = doc(db, "candidates", candidateAuthUid); 
+      // Fetch existing doc to preserve overallStatus if not explicitly changing it
+      const existingDocSnap = await getDoc(candidateDocRef);
+      const existingData = existingDocSnap.exists() ? existingDocSnap.data() : {};
+
       const dataToSave: Candidate = {
         ...candidateProfileData,
-        id: candidateAuthUid, // id is candidate's auth UID
-        userId: candidateAuthUid, // userId is also candidate's auth UID
+        id: candidateAuthUid, 
+        userId: candidateAuthUid, 
         profileLastUpdatedAt: new Date(),
         parsedText: candidateProfileData.parsedText || "",
+        overallStatus: existingData.overallStatus || 'new', // Preserve or initialize
+        overallStatusLastUpdatedAt: existingData.overallStatusLastUpdatedAt || new Date(), // Preserve or initialize
       };
       await setDoc(candidateDocRef, dataToSave, { merge: true });
-      setUserCandidateProfile(dataToSave); // For immediate update in candidate's own view
-      // Also update in the main candidates list for HR view consistency
-      setCandidates(prev => prev.map(c => c.id === candidateAuthUid ? dataToSave : c)
+      const finalCandidateData = { ...dataToSave, overallStatusLastUpdatedAt: (dataToSave.overallStatusLastUpdatedAt as Timestamp).toDate() } as Candidate;
+      
+      setUserCandidateProfile(finalCandidateData); 
+      setCandidates(prev => prev.map(c => c.id === candidateAuthUid ? finalCandidateData : c)
                                 .sort((a, b) => (b.profileLastUpdatedAt?.getTime() || 0) - (a.profileLastUpdatedAt?.getTime() || 0))
       );
-      return dataToSave;
+      return finalCandidateData;
     } catch (error) {
       console.error("Error saving candidate data to Firestore (User):", error);
       return null;
@@ -232,12 +237,13 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       if ('id' in dataToUpdate) delete (dataToUpdate as any).id;
 
       await updateDoc(candidateRef, dataToUpdate);
+      const finalUpdatedCandidate = { ...updatedCandidate, profileLastUpdatedAt: (dataToUpdate.profileLastUpdatedAt as Date) } as Candidate;
       setCandidates((prev) =>
-        prev.map(c => c.id === updatedCandidate.id ? { ...updatedCandidate, profileLastUpdatedAt: (dataToUpdate.profileLastUpdatedAt as Date) } : c)
+        prev.map(c => c.id === updatedCandidate.id ? finalUpdatedCandidate : c)
            .sort((a, b) => (b.profileLastUpdatedAt?.getTime() || 0) - (a.profileLastUpdatedAt?.getTime() || 0))
       );
       if (userCandidateProfile && userCandidateProfile.id === updatedCandidate.id) {
-        setUserCandidateProfile({ ...updatedCandidate, profileLastUpdatedAt: (dataToUpdate.profileLastUpdatedAt as Date) });
+        setUserCandidateProfile(finalUpdatedCandidate);
       }
     } catch (error) {
       console.error("Error updating candidate in Firestore:", error);
@@ -273,7 +279,6 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       return null;
     }
     let currentCandidateProfile = userCandidateProfile;
-    // If profile isn't loaded in context, or crucial parsedText is missing, try fetching fresh.
     if (!currentCandidateProfile || !currentCandidateProfile.parsedText) { 
       currentCandidateProfile = await fetchCandidateProfile(user.uid);
     }
@@ -361,7 +366,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     candidateName: string,
     jobTitle: string
   ): Promise<boolean> => {
-    if (!db) return false;
+    if (!db || !user ) return false;
     try {
       const appRef = doc(db, "jobApplications", applicationId);
       await updateDoc(appRef, {
@@ -369,17 +374,16 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         reviewedByHrAt: Timestamp.fromDate(new Date()),
       });
 
-      // Simulate email
       let emailSubject = "";
       let emailBody = "";
       if (newStatus === 'accepted') {
-        emailSubject = `Congratulations on your application for ${jobTitle}!`;
-        emailBody = `Dear ${candidateName},\n\nWe are pleased to inform you that your application for the ${jobTitle} position has been successful! We will be in touch shortly with the next steps.\n\nBest regards,\nTalentFlow AI Team`;
-        console.log(`[AppContext] Simulating ACCEPTANCE email to ${candidateEmail}. Subject: ${emailSubject}`);
+        emailSubject = `Congratulations: Your Application for ${jobTitle} at TalentFlow AI!`;
+        emailBody = `Dear ${candidateName},\n\nWe are thrilled to inform you that your application for the ${jobTitle} position has been successful! Your profile and questionnaire responses stood out, and we'd like to move to the next steps.\n\nOur recruitment team will be in touch shortly with more details.\n\nCongratulations again!\n\nBest regards,\nThe TalentFlow AI Team`;
+        console.log(`[AppContext] Simulating ACCEPTANCE email for application ${applicationId} to ${candidateEmail}. Subject: ${emailSubject}`);
       } else if (newStatus === 'rejected_hr') {
-        emailSubject = `Update on your application for ${jobTitle}`;
-        emailBody = `Dear ${candidateName},\n\nThank you for your interest in the ${jobTitle} position. After careful consideration, we have decided to move forward with other candidates whose qualifications more closely match the requirements of this role at this time.\n\nWe appreciate you taking the time to apply and wish you the best in your job search.\n\nBest regards,\nTalentFlow AI Team`;
-        console.log(`[AppContext] Simulating REJECTION email to ${candidateEmail}. Subject: ${emailSubject}`);
+        emailSubject = `Update on Your Application for ${jobTitle} at TalentFlow AI`;
+        emailBody = `Dear ${candidateName},\n\nThank you for your interest in the ${jobTitle} position and for taking the time to complete the questionnaire.\n\nAfter careful review of your application by our HR team, we have decided to move forward with other candidates whose qualifications and experience more closely match the current requirements for this specific role.\n\nWe appreciate your effort and wish you the best in your job search.\n\nSincerely,\nThe TalentFlow AI Team`;
+        console.log(`[AppContext] Simulating REJECTION email for application ${applicationId} to ${candidateEmail}. Subject: ${emailSubject}`);
       }
       console.log("Email body for simulation:\n", emailBody);
 
@@ -388,7 +392,61 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       console.error("Error updating application status by HR:", error);
       return false;
     }
-  }, []);
+  }, [user]);
+
+  const hrUpdateCandidateOverallStatus = useCallback(async (
+    candidateId: string,
+    newStatus: CandidateOverallStatus,
+    candidateDetails: { email?: string, name?: string }
+  ): Promise<boolean> => {
+    if (!db || !user) return false;
+    try {
+      const candidateRef = doc(db, "candidates", candidateId);
+      await updateDoc(candidateRef, {
+        overallStatus: newStatus,
+        overallStatusLastUpdatedAt: Timestamp.fromDate(new Date()),
+      });
+      setCandidates(prev => prev.map(c => c.id === candidateId ? { ...c, overallStatus: newStatus, overallStatusLastUpdatedAt: new Date() } : c));
+
+      let emailSubject = "";
+      let emailBody = "";
+      const candidateName = candidateDetails.name || "Candidate";
+      const candidateEmail = candidateDetails.email;
+
+      if (candidateEmail) {
+        switch (newStatus) {
+          case 'contacted':
+            emailSubject = `Following Up: TalentFlow AI`;
+            emailBody = `Dear ${candidateName},\n\nThis is a follow-up regarding your profile with TalentFlow AI. We're impressed with your background and would like to discuss potential opportunities. Please let us know your availability for a brief chat.\n\nBest regards,\nThe TalentFlow AI Team`;
+            break;
+          case 'interview_scheduled':
+            emailSubject = `Interview Scheduled: TalentFlow AI`;
+            emailBody = `Dear ${candidateName},\n\nWe're pleased to confirm your interview has been scheduled. Please check your calendar for the details. We look forward to speaking with you!\n\nBest regards,\nThe TalentFlow AI Team`;
+            break;
+          case 'offer_extended':
+            emailSubject = `Congratulations: Offer from TalentFlow AI`;
+            emailBody = `Dear ${candidateName},\n\nWe are delighted to extend an offer of employment to you! Details of the offer will be sent in a separate communication. We are very excited about the possibility of you joining our team.\n\nBest regards,\nThe TalentFlow AI Team`;
+            break;
+          case 'hired':
+            emailSubject = `Welcome to TalentFlow AI!`;
+            emailBody = `Dear ${candidateName},\n\nWelcome aboard! We are thrilled to have you join the TalentFlow AI team. Your onboarding details will follow shortly.\n\nBest regards,\nThe TalentFlow AI Team`;
+            break;
+          case 'rejected_overall':
+            emailSubject = `Update on Your Profile with TalentFlow AI`;
+            emailBody = `Dear ${candidateName},\n\nThank you for your interest in TalentFlow AI. After careful consideration of your overall profile, we have decided to pursue other candidates at this time whose backgrounds more closely align with our current openings.\n\nWe appreciate your time and wish you the best in your career endeavors.\n\nSincerely,\nThe TalentFlow AI Team`;
+            break;
+        }
+        if (emailSubject && emailBody) {
+          console.log(`[AppContext] Simulating OVERALL STATUS email to ${candidateEmail} for candidate ${candidateId}. New Status: ${newStatus}. Subject: ${emailSubject}`);
+          console.log("Email body for simulation:\n", emailBody);
+        }
+      }
+      return true;
+    } catch (error) {
+      console.error("Error updating candidate overall status by HR:", error);
+      return false;
+    }
+  }, [user]);
 
 
   return (
@@ -410,6 +468,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         fetchCandidateProfile,
         fetchApplicationsForCandidate,
         hrUpdateApplicationStatus,
+        hrUpdateCandidateOverallStatus,
     }}>
       {children}
     </AppContext.Provider>
@@ -423,4 +482,3 @@ export const useAppContext = (): AppContextType => {
   }
   return context;
 };
-

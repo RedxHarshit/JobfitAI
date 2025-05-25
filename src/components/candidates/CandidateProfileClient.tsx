@@ -2,23 +2,23 @@
 // src/components/candidates/CandidateProfileClient.tsx
 "use client";
 
-import type { Candidate, Job, InterviewQuestionCategory } from "@/types";
+import type { Candidate, Job, InterviewQuestionCategory, JobApplication, CandidateOverallStatus } from "@/types";
 import { useAppContext } from "@/contexts/AppContext";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Label } from "@/components/ui/label";
+import { Label } from "@/components/ui/label"; // Added import for Label
 import { Textarea } from "@/components/ui/textarea";
 import { Loader } from "@/components/ui/loader";
 import { useToast } from "@/hooks/use-toast";
-import { useState, useEffect, useMemo } from "react";
-import { useRouter } from "next/navigation"; // For redirect after delete
+import { useState, useEffect, useMemo, useCallback } from "react";
+import { useRouter } from "next/navigation"; 
 import { matchCandidateToJob, type MatchCandidateToJobOutput } from "@/ai/flows/match-candidate-to-job";
 import { generateInterviewQuestions } from "@/ai/flows/generate-interview-questions";
-import { UserCircle, FileText, Briefcase, Lightbulb, Sparkles, Brain, AlertTriangle, Trash2 } from "lucide-react";
+import { UserCircle, FileText, Briefcase, Lightbulb, Sparkles, Brain, AlertTriangle, Trash2, CheckCircle, XCircle, Send, ExternalLink, Clock, Edit3, History, PackageCheck, PackageX, Handshake, MessageSquare, UserCheck, UserX, FileQuestion } from "lucide-react";
 import Image from "next/image";
 import { Progress } from "@/components/ui/progress";
 import { useAuth } from "@/contexts/AuthContext";
@@ -33,16 +33,24 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import { format } from "date-fns";
 
 interface CandidateProfileClientProps {
   candidate: Candidate;
 }
 
-export function CandidateProfileClient({ candidate }: CandidateProfileClientProps) {
+export function CandidateProfileClient({ candidate: initialCandidate }: CandidateProfileClientProps) {
   const { user } = useAuth();
-  const { jobs, getJobById, updateCandidate, deleteCandidate } = useAppContext();
+  const { jobs, getJobById, updateCandidate, deleteCandidate, fetchApplicationsForCandidate, hrUpdateApplicationStatus, hrUpdateCandidateOverallStatus, getCandidateById } = useAppContext();
   const { toast } = useToast();
   const router = useRouter();
+
+  // Use local state for candidate to reflect updates from context or local actions
+  const [candidate, setCandidate] = useState<Candidate>(initialCandidate);
+   useEffect(() => {
+    setCandidate(initialCandidate); // Update local state if prop changes
+  }, [initialCandidate]);
+
 
   const [selectedJobId, setSelectedJobId] = useState<string | undefined>(candidate.matchData?.jobId ?? undefined);
   const [customJobDescription, setCustomJobDescription] = useState<string>("");
@@ -52,12 +60,16 @@ export function CandidateProfileClient({ candidate }: CandidateProfileClientProp
   const [matchResult, setMatchResult] = useState<MatchCandidateToJobOutput | null>(candidate.matchData || null);
   
   const [questionsLoading, setQuestionsLoading] = useState(false);
-  // Initialize with candidate's questions if they are in the new format, otherwise empty
   const initialInterviewQuestions = Array.isArray(candidate.interviewQuestions) &&
                                 candidate.interviewQuestions.every(q => typeof q === 'object' && q.category && Array.isArray(q.questions))
                                 ? candidate.interviewQuestions
                                 : [];
   const [interviewQuestions, setInterviewQuestions] = useState<InterviewQuestionCategory[]>(initialInterviewQuestions);
+
+  const [applications, setApplications] = useState<JobApplication[]>([]);
+  const [loadingApplications, setLoadingApplications] = useState(true);
+  const [hrActionLoading, setHrActionLoading] = useState<Record<string, boolean>>({}); // For job app actions
+  const [overallStatusLoading, setOverallStatusLoading] = useState(false);
 
 
   const candidateResumeText = useMemo(() => {
@@ -79,13 +91,26 @@ export function CandidateProfileClient({ candidate }: CandidateProfileClientProp
     } else if (candidate.matchData) { 
         setUseCustomJob(true);
     }
-     // Ensure interviewQuestions state updates if candidate prop changes (e.g., after initial load)
     const updatedInitialQuestions = Array.isArray(candidate.interviewQuestions) &&
                                   candidate.interviewQuestions.every(q => typeof q === 'object' && q.category && Array.isArray(q.questions))
                                   ? candidate.interviewQuestions
                                   : [];
     setInterviewQuestions(updatedInitialQuestions);
   }, [candidate.matchData, candidate.interviewQuestions, getJobById]);
+
+  const stableFetchApplications = useCallback(fetchApplicationsForCandidate, []);
+  useEffect(() => {
+    if (candidate && candidate.id) {
+      setLoadingApplications(true);
+      stableFetchApplications(candidate.id)
+        .then(setApplications)
+        .catch(err => {
+          console.error("Failed to fetch applications:", err);
+          toast({ title: "Error", description: "Could not load job applications.", variant: "destructive" });
+        })
+        .finally(() => setLoadingApplications(false));
+    }
+  }, [candidate, stableFetchApplications, toast]);
 
 
   const handleMatchCandidate = async () => {
@@ -113,10 +138,11 @@ export function CandidateProfileClient({ candidate }: CandidateProfileClientProp
       setMatchResult(result);
       const updatedCandidateData: Candidate = { 
         ...candidate, 
-        matchData: { ...result, jobId: useCustomJob ? null : selectedJobId! },
-        userId: user.uid 
+        matchData: { ...result, jobId: useCustomJob ? undefined : selectedJobId! }, // Use undefined for custom job
+        userId: candidate.userId // Keep original userId
       };
-      await updateCandidate(updatedCandidateData);
+      await updateCandidate(updatedCandidateData); // updateCandidate should handle merging properly
+      setCandidate(prev => ({...prev, matchData: updatedCandidateData.matchData}));
       toast({ title: "Matching Complete!", description: `Match score: ${Math.round(result.matchScore * 100)}%` });
     } catch (error: any) {
       toast({ title: "Matching Error", description: error.message || "Failed to match candidate.", variant: "destructive" });
@@ -147,13 +173,14 @@ export function CandidateProfileClient({ candidate }: CandidateProfileClientProp
         candidateProfile: candidateResumeText,
         jobRequirements: jobDescriptionToUse,
       });
-      setInterviewQuestions(result.structuredQuestions); // Use structuredQuestions
+      setInterviewQuestions(result.structuredQuestions); 
       const updatedCandidateData: Candidate = { 
         ...candidate, 
-        interviewQuestions: result.structuredQuestions, // Store structuredQuestions
-        userId: user.uid 
+        interviewQuestions: result.structuredQuestions, 
+        userId: candidate.userId 
       };
       await updateCandidate(updatedCandidateData);
+      setCandidate(prev => ({...prev, interviewQuestions: result.structuredQuestions}));
       toast({ title: "Interview Questions Generated!", description: "Insightful questions are ready for your review." });
     } catch (error: any) {
       toast({ title: "Question Generation Error", description: error.message || "Failed to generate questions.", variant: "destructive" });
@@ -170,21 +197,54 @@ export function CandidateProfileClient({ candidate }: CandidateProfileClientProp
     const success = await deleteCandidate(candidate.id);
     if (success) {
       toast({ title: "Candidate Deleted", description: `${candidate.candidateName} has been removed.` });
-      router.push("/dashboard/candidates"); // Redirect to candidates list
+      router.push("/dashboard/candidates"); 
     } else {
       toast({ title: "Deletion Failed", description: "Could not delete the candidate. Please try again.", variant: "destructive" });
     }
   };
 
+  const handleJobApplicationAction = async (applicationId: string, action: 'accepted' | 'rejected_hr') => {
+    setHrActionLoading(prev => ({ ...prev, [applicationId]: true }));
+    const app = applications.find(a => a.id === applicationId);
+    if (!app) {
+      toast({ title: "Error", description: "Application not found.", variant: "destructive" });
+      setHrActionLoading(prev => ({ ...prev, [applicationId]: false }));
+      return;
+    }
+
+    const success = await hrUpdateApplicationStatus(applicationId, action, app.candidateEmailSnapshot || "", app.candidateNameSnapshot || "", app.jobTitle);
+    if (success) {
+      toast({ title: "Application Updated", description: `Application for ${app.jobTitle} has been ${action}.` });
+      setApplications(prevApps => prevApps.map(a => a.id === applicationId ? { ...a, status: action, reviewedByHrAt: new Date() } : a));
+    } else {
+      toast({ title: "Update Failed", description: "Could not update application status.", variant: "destructive" });
+    }
+    setHrActionLoading(prev => ({ ...prev, [applicationId]: false }));
+  };
+
+  const handleOverallCandidateStatusChange = async (newStatus: CandidateOverallStatus) => {
+    setOverallStatusLoading(true);
+    const success = await hrUpdateCandidateOverallStatus(candidate.id, newStatus, { email: candidate.email, name: candidate.candidateName });
+    if (success) {
+      toast({ title: "Candidate Status Updated", description: `${candidate.candidateName}'s status changed to ${newStatus.replace(/_/g, ' ')}.` });
+      setCandidate(prev => ({ ...prev, overallStatus: newStatus, overallStatusLastUpdatedAt: new Date() }));
+    } else {
+      toast({ title: "Status Update Failed", description: "Could not update candidate's overall status.", variant: "destructive" });
+    }
+    setOverallStatusLoading(false);
+  };
+
   const matchScorePercentage = matchResult ? Math.round(matchResult.matchScore * 100) : 0;
+
+  const overallStatusOptions: CandidateOverallStatus[] = ['new', 'under_review_hr', 'contacted', 'interview_scheduled', 'offer_extended', 'hired', 'rejected_overall'];
 
   return (
     <div className="space-y-6">
       <Card className="shadow-lg">
-        <CardHeader className="flex flex-row items-start justify-between gap-4 bg-muted/30 p-6">
+        <CardHeader className="flex flex-col sm:flex-row items-start justify-between gap-4 bg-muted/30 p-6">
           <div className="flex items-center gap-4">
             <Image 
-              src={`https://placehold.co/100x100.png?text=${candidate.candidateName ? candidate.candidateName[0] : 'C'}`} 
+              src={`https://placehold.co/100x100.png?text=${candidate.candidateName ? candidate.candidateName.charAt(0).toUpperCase() : 'C'}`} 
               alt={candidate.candidateName || "Candidate"} 
               width={100} 
               height={100} 
@@ -196,36 +256,69 @@ export function CandidateProfileClient({ candidate }: CandidateProfileClientProp
               {candidate.email && <CardDescription className="text-lg">{candidate.email}</CardDescription>}
               {candidate.phone && <CardDescription className="text-md">{candidate.phone}</CardDescription>}
               {candidate.resumeFileName && <CardDescription className="text-sm text-muted-foreground italic mt-1">Resume: {candidate.resumeFileName}</CardDescription>}
+              {candidate.overallStatus && (
+                <Badge variant={candidate.overallStatus === 'hired' ? 'default' : candidate.overallStatus === 'rejected_overall' ? 'destructive' : 'secondary'} className="mt-2 text-sm">
+                  Overall Status: {candidate.overallStatus.replace(/_/g, ' ')}
+                </Badge>
+              )}
+               {candidate.overallStatusLastUpdatedAt && (
+                <p className="text-xs text-muted-foreground italic mt-1">
+                    Status Updated: {format(new Date(candidate.overallStatusLastUpdatedAt), "PPP p")}
+                </p>
+              )}
             </div>
           </div>
-          <AlertDialog>
-            <AlertDialogTrigger asChild>
-              <Button variant="destructive" size="sm">
-                <Trash2 className="mr-2 h-4 w-4" /> Delete Candidate
-              </Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  This action cannot be undone. This will permanently delete the candidate
-                  profile for {candidate.candidateName || "this candidate"}.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                <AlertDialogAction onClick={handleDeleteCandidate} className="bg-destructive hover:bg-destructive/90">
-                  Yes, delete candidate
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
+          <div className="flex flex-col gap-2 items-end w-full sm:w-auto">
+             <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button variant="destructive" size="sm" className="w-full sm:w-auto">
+                    <Trash2 className="mr-2 h-4 w-4" /> Delete Candidate
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      This action cannot be undone. This will permanently delete the candidate
+                      profile for {candidate.candidateName || "this candidate"}.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction onClick={handleDeleteCandidate} className="bg-destructive hover:bg-destructive/90">
+                      Yes, delete candidate
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+              <div className="w-full sm:w-auto">
+                <Label htmlFor="overall-status-select" className="text-xs text-muted-foreground">Update Overall Status:</Label>
+                <Select
+                    value={candidate.overallStatus || 'new'}
+                    onValueChange={(value) => handleOverallCandidateStatusChange(value as CandidateOverallStatus)}
+                    disabled={overallStatusLoading}
+                >
+                    <SelectTrigger id="overall-status-select" className="w-full sm:w-auto">
+                        <SelectValue placeholder="Set overall status..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                        {overallStatusOptions.map(status => (
+                            <SelectItem key={status} value={status}>
+                                {status.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                            </SelectItem>
+                        ))}
+                    </SelectContent>
+                </Select>
+              </div>
+              {overallStatusLoading && <Loader size={16} className="mt-1 self-center"/>}
+          </div>
         </CardHeader>
       </Card>
 
       <Tabs defaultValue="profile" className="w-full">
-        <TabsList className="grid w-full grid-cols-2 md:grid-cols-3">
+        <TabsList className="grid w-full grid-cols-2 md:grid-cols-4">
           <TabsTrigger value="profile"><UserCircle className="mr-2" /> Profile Details</TabsTrigger>
+          <TabsTrigger value="applications"><FileQuestion className="mr-2" /> Job Applications ({applications.length})</TabsTrigger>
           <TabsTrigger value="matching"><Brain className="mr-2" /> AI Matching</TabsTrigger>
           <TabsTrigger value="interview"><Lightbulb className="mr-2" /> Interview Insights</TabsTrigger>
         </TabsList>
@@ -258,6 +351,102 @@ export function CandidateProfileClient({ candidate }: CandidateProfileClientProp
               </Accordion>
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="applications" className="mt-4">
+            <Card>
+                <CardHeader>
+                    <CardTitle className="flex items-center gap-2"><Briefcase /> Candidate's Job Applications</CardTitle>
+                    <CardDescription>Review applications submitted by {candidate.candidateName || "this candidate"}.</CardDescription>
+                </CardHeader>
+                <CardContent>
+                    {loadingApplications ? (
+                        <div className="flex justify-center items-center py-10">
+                            <Loader size={32} />
+                            <p className="ml-2 text-muted-foreground">Loading applications...</p>
+                        </div>
+                    ) : applications.length === 0 ? (
+                        <div className="text-center py-10">
+                            <FileQuestion size={48} className="mx-auto text-muted-foreground mb-3" />
+                            <p className="text-muted-foreground">No job applications found for this candidate.</p>
+                        </div>
+                    ) : (
+                        <div className="space-y-4">
+                            {applications.map(app => (
+                                <Card key={app.id} className="shadow-sm">
+                                    <CardHeader>
+                                        <div className="flex justify-between items-start">
+                                            <div>
+                                                <CardTitle className="text-lg">{app.jobTitle}</CardTitle>
+                                                <CardDescription>Applied on: {format(new Date(app.appliedAt), "PPP")}</CardDescription>
+                                            </div>
+                                            <Badge variant={
+                                                app.status === 'accepted' || app.status === 'hired' ? 'default' 
+                                                : app.status.startsWith('rejected') ? 'destructive' 
+                                                : app.status === 'under_review_hr' ? 'secondary'
+                                                : 'outline'
+                                            } className="capitalize">
+                                                {app.status.replace(/_/g, ' ')}
+                                            </Badge>
+                                        </div>
+                                    </CardHeader>
+                                    <CardContent className="space-y-3">
+                                        {app.score !== undefined && (
+                                            <div className="flex items-center gap-3">
+                                                <span className="font-semibold">AI Score:</span>
+                                                <Progress value={app.score} className="w-1/2 h-2.5" />
+                                                <span className="text-sm font-bold text-primary">{app.score}%</span>
+                                            </div>
+                                        )}
+                                        {app.scoreJustification && (
+                                            <div>
+                                                <h4 className="font-semibold text-sm">AI Justification:</h4>
+                                                <p className="text-xs text-muted-foreground whitespace-pre-line line-clamp-3">{app.scoreJustification}</p>
+                                            </div>
+                                        )}
+                                        {app.questions && app.questions.length > 0 && (
+                                          <Accordion type="single" collapsible className="w-full text-sm">
+                                            <AccordionItem value="qna">
+                                              <AccordionTrigger className="text-sm py-2">View Questionnaire & Answers</AccordionTrigger>
+                                              <AccordionContent className="space-y-2 pt-2">
+                                                {app.questions.map((q, idx) => (
+                                                  <div key={q.id} className="p-2 bg-muted/30 rounded-md">
+                                                    <p className="font-semibold text-xs">Q{idx+1}: {q.text}</p>
+                                                    <p className="text-xs mt-1 text-muted-foreground">A: {app.answers?.find(a => a.questionId === q.id)?.answerText || "Not answered"}</p>
+                                                  </div>
+                                                ))}
+                                              </AccordionContent>
+                                            </AccordionItem>
+                                          </Accordion>
+                                        )}
+                                    </CardContent>
+                                    {app.status === 'under_review_hr' && (
+                                        <CardFooter className="gap-2 justify-end">
+                                            <Button 
+                                                size="sm" 
+                                                variant="outline"
+                                                onClick={() => handleJobApplicationAction(app.id, 'rejected_hr')}
+                                                disabled={hrActionLoading[app.id]}
+                                            >
+                                                {hrActionLoading[app.id] && hrActionLoading[app.id] === true ? <Loader size={16} className="mr-2" /> : <XCircle className="mr-2 h-4 w-4" />}
+                                                Reject Application
+                                            </Button>
+                                            <Button 
+                                                size="sm"
+                                                onClick={() => handleJobApplicationAction(app.id, 'accepted')}
+                                                disabled={hrActionLoading[app.id]}
+                                            >
+                                                 {hrActionLoading[app.id] && hrActionLoading[app.id] === true ? <Loader size={16} className="mr-2" /> : <CheckCircle className="mr-2 h-4 w-4" />}
+                                                Accept Application
+                                            </Button>
+                                        </CardFooter>
+                                    )}
+                                </Card>
+                            ))}
+                        </div>
+                    )}
+                </CardContent>
+            </Card>
         </TabsContent>
 
         <TabsContent value="matching" className="mt-4">
@@ -389,5 +578,3 @@ export function CandidateProfileClient({ candidate }: CandidateProfileClientProp
     </div>
   );
 }
-
-    
