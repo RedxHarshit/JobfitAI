@@ -22,6 +22,7 @@ import {
   limit,
 } from "firebase/firestore";
 import { useAuth } from "./AuthContext";
+import { format } from "date-fns";
 
 // Helper to convert Firestore Timestamps to Dates in nested objects
 const convertTimestampsToDates = (data: DocumentData): any => {
@@ -49,7 +50,7 @@ interface AppContextType {
   candidates: Candidate[];
   jobs: Job[];
   userCandidateProfile: Candidate | null;
-  allJobApplications: JobApplication[]; // For candidate's own applications view
+  allJobApplications: JobApplication[]; 
   addCandidate: (candidateData: Omit<Candidate, "id" | "userId" | "profileLastUpdatedAt" | "overallStatus" | "overallStatusLastUpdatedAt">) => Promise<Candidate | null>;
   saveCandidateDataForUser: (userId: string, candidateData: Omit<Candidate, "id" | "userId" | "profileLastUpdatedAt" | "overallStatus" | "overallStatusLastUpdatedAt"> & { userId: string }) => Promise<Candidate | null>;
   addJob: (jobData: Omit<Job, "id" | "userId" | "createdAt">) => Promise<Job | null>;
@@ -67,6 +68,7 @@ interface AppContextType {
   fetchApplicationsForJob: (jobId: string) => Promise<JobApplication[]>;
   hrUpdateApplicationStatus: (applicationId: string, newStatus: 'accepted' | 'rejected_hr' | 'interview_scheduled', candidateEmail: string, candidateName: string, jobTitle: string, interviewDetails?: InterviewDetails) => Promise<boolean>;
   hrUpdateCandidateOverallStatus: (candidateId: string, newStatus: CandidateOverallStatus, candidateDetails: { email?: string, name?: string }) => Promise<boolean>;
+  batchScheduleInterviewsForJob: (jobId: string, jobTitle: string) => Promise<{ success: boolean; count: number; message: string }>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -175,7 +177,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       console.error("Error adding candidate to Firestore (HR):", error);
       return null;
     }
-  }, [user, setCandidates]);
+  }, [user]);
 
   const saveCandidateDataForUser = useCallback(async (candidateAuthUid: string, candidateProfileData: Omit<Candidate, "id" | "userId" | "profileLastUpdatedAt" | "overallStatus" | "overallStatusLastUpdatedAt"> & { userId: string }): Promise<Candidate | null> => {
     if (!db) return null;
@@ -186,7 +188,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     try {
       const candidateDocRef = doc(db, "candidates", candidateAuthUid);
       const existingDocSnap = await getDoc(candidateDocRef);
-      const existingData = existingDocSnap.exists() ? convertTimestampsToDates(existingDocSnap.data()) as Candidate : {} as Partial<Candidate>;
+      const existingData = existingDocSnap.exists() ? convertTimestampsToDates(existingDocSnap.data()) as Partial<Candidate> : {} as Partial<Candidate>;
       const now = new Date();
 
       const dataToSave: Omit<Candidate, 'id'> & { userId: string } = {
@@ -194,22 +196,24 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         userId: candidateAuthUid, 
         profileLastUpdatedAt: now,
         parsedText: candidateProfileData.parsedText || "",
-        overallStatus: existingData.overallStatus || 'new',
+        // Preserve existing overallStatus if it exists, otherwise default to 'new'
+        overallStatus: existingData.overallStatus || 'new', 
         overallStatusLastUpdatedAt: existingData.overallStatusLastUpdatedAt ? new Date(existingData.overallStatusLastUpdatedAt.toString()) : now,
       };
       await setDoc(candidateDocRef, dataToSave, { merge: true });
       const finalCandidateData = convertTimestampsToDates({ ...dataToSave, id: candidateAuthUid }) as Candidate;
 
       setUserCandidateProfile(finalCandidateData);
-      setCandidates(prev => prev.map(c => c.id === candidateAuthUid ? finalCandidateData : c)
-                                .sort((a, b) => (b.profileLastUpdatedAt?.getTime() || 0) - (a.profileLastUpdatedAt?.getTime() || 0))
+      // Also update in the main candidates list if HR is viewing their own profile somehow or for consistency
+       setCandidates(prev => prev.map(c => c.id === candidateAuthUid ? finalCandidateData : c)
+                                .sort((a, b) => (new Date(b.profileLastUpdatedAt || 0).getTime()) - (new Date(a.profileLastUpdatedAt || 0).getTime()))
       );
       return finalCandidateData;
     } catch (error) {
       console.error("Error saving candidate data to Firestore (User):", error);
       return null;
     }
-  }, [setUserCandidateProfile, setCandidates]);
+  }, []);
 
   const addJob = useCallback(async (jobData: Omit<Job, "id" | "userId" | "createdAt">): Promise<Job | null> => {
     if (!user || !db) return null;
@@ -221,13 +225,13 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       };
       const docRef = await addDoc(collection(db, "jobs"), newJobWithTimestamp);
       const newJob: Job = convertTimestampsToDates({ ...newJobWithTimestamp, id: docRef.id }) as Job;
-      setJobs((prev) => [newJob, ...prev].sort((a,b) => b.createdAt.getTime() - a.createdAt.getTime()));
+      setJobs((prev) => [newJob, ...prev].sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
       return newJob;
     } catch (error) {
       console.error("Error adding job to Firestore:", error);
       return null;
     }
-  }, [user, setJobs]);
+  }, [user]);
 
   const deleteJob = useCallback(async (jobId: string): Promise<boolean> => {
     if (!db || !user) return false;
@@ -240,27 +244,30 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       console.error("Error deleting job from Firestore:", error);
       return false;
     }
-  }, [user, setJobs]);
+  }, [user]);
 
   const updateCandidate = useCallback(async (updatedCandidate: Candidate) => {
     if (!db) return;
     try {
       const candidateRef = doc(db, "candidates", updatedCandidate.id);
+      
+      // Prepare data for Firestore, ensuring Date objects are used for timestamps
       const dataToUpdate = { ...updatedCandidate };
-      if ('id' in dataToUpdate) delete (dataToUpdate as any).id;
+      if ('id' in dataToUpdate) delete (dataToUpdate as any).id; // Don't save ID field in document
 
       if (dataToUpdate.profileLastUpdatedAt && !(dataToUpdate.profileLastUpdatedAt instanceof Timestamp)) {
-        dataToUpdate.profileLastUpdatedAt = Timestamp.fromDate(new Date(dataToUpdate.profileLastUpdatedAt.toString()));
+        dataToUpdate.profileLastUpdatedAt = new Date(dataToUpdate.profileLastUpdatedAt.toString());
       }
       if (dataToUpdate.overallStatusLastUpdatedAt && !(dataToUpdate.overallStatusLastUpdatedAt instanceof Timestamp)) {
-        dataToUpdate.overallStatusLastUpdatedAt = Timestamp.fromDate(new Date(dataToUpdate.overallStatusLastUpdatedAt.toString()));
+        dataToUpdate.overallStatusLastUpdatedAt = new Date(dataToUpdate.overallStatusLastUpdatedAt.toString());
       }
-
-      await updateDoc(candidateRef, dataToUpdate);
+      
+      await updateDoc(candidateRef, dataToUpdate as DocumentData);
       const finalUpdatedCandidate = convertTimestampsToDates({ ...updatedCandidate, id: updatedCandidate.id}) as Candidate;
+
       setCandidates((prev) =>
         prev.map(c => c.id === updatedCandidate.id ? finalUpdatedCandidate : c)
-           .sort((a, b) => (b.profileLastUpdatedAt?.getTime() || 0) - (a.profileLastUpdatedAt?.getTime() || 0))
+           .sort((a, b) => (new Date(b.profileLastUpdatedAt || 0).getTime()) - (new Date(a.profileLastUpdatedAt || 0).getTime()))
       );
       if (userCandidateProfile && userCandidateProfile.id === updatedCandidate.id) {
         setUserCandidateProfile(finalUpdatedCandidate);
@@ -268,7 +275,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     } catch (error) {
       console.error("Error updating candidate in Firestore:", error);
     }
-  }, [setCandidates, userCandidateProfile, setUserCandidateProfile]);
+  }, [userCandidateProfile]);
 
   const deleteCandidate = useCallback(async (candidateId: string): Promise<boolean> => {
     if (!db) return false;
@@ -284,12 +291,11 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       console.error("Error deleting candidate from Firestore:", error);
       return false;
     }
-  }, [setCandidates, userCandidateProfile, setUserCandidateProfile]);
+  }, [userCandidateProfile]);
 
   const getCandidateById = useCallback((id: string): Candidate | undefined => {
     if (userCandidateProfile && userCandidateProfile.id === id) return userCandidateProfile;
-    const foundCandidate = candidates.find(c => c.id === id);
-    return foundCandidate;
+    return candidates.find(c => c.id === id);
   }, [userCandidateProfile, candidates]);
 
   const getJobById = useCallback((id: string) => jobs.find(j => j.id === id), [jobs]);
@@ -340,13 +346,13 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       };
       const docRef = await addDoc(collection(db, "jobApplications"), applicationData);
       const newApp = convertTimestampsToDates({ ...applicationData, id: docRef.id }) as JobApplication;
-      setAllJobApplications(prev => [...prev, newApp].sort((a, b) => b.appliedAt.getTime() - a.appliedAt.getTime()));
+      setAllJobApplications(prev => [...prev, newApp].sort((a, b) => new Date(b.appliedAt).getTime() - new Date(a.appliedAt).getTime()));
       return { applicationId: docRef.id, isNew: true };
     } catch (error) {
       console.error("Error starting job application:", error);
       return { applicationId: null, isNew: false };
     }
-  }, [user, userCandidateProfile, fetchCandidateProfile, setAllJobApplications]);
+  }, [user, userCandidateProfile, fetchCandidateProfile]);
 
   const getJobApplicationById = useCallback(async (applicationId: string): Promise<JobApplication | null> => {
     if (!db || !applicationId) return null;
@@ -369,46 +375,29 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       const appRef = doc(db, "jobApplications", applicationId);
       let dataToUpdate = { ...data };
 
-      (Object.keys(dataToUpdate) as Array<keyof typeof dataToUpdate>).forEach(key => {
-        const value = dataToUpdate[key];
-        if (value instanceof Date && !(value instanceof Timestamp)) {
-          (dataToUpdate as any)[key] = Timestamp.fromDate(value);
-        } else if (Array.isArray(value)) {
-            (dataToUpdate as any)[key] = value.map(item => {
-                if (item instanceof Date && !(item instanceof Timestamp)) return Timestamp.fromDate(item);
-                if (typeof item === 'object' && item !== null && !(item instanceof Date) && !(item instanceof Timestamp)) {
-                    return convertDatesToTimestampsInObject(item);
-                }
-                return item;
-            });
-        } else if (typeof value === 'object' && value !== null && !(value instanceof Timestamp) && !(value instanceof Date) && key === 'interviewDetails') {
-           (dataToUpdate as any)[key] = convertDatesToTimestampsInObject(value);
+      // Convert specific Date fields to Firestore Timestamps before saving
+      const dateFields: (keyof JobApplication)[] = ['appliedAt', 'questionnaireGeneratedAt', 'questionnaireCompletedAt', 'reviewedByHrAt'];
+      dateFields.forEach(field => {
+        if (dataToUpdate[field] && dataToUpdate[field] instanceof Date) {
+          (dataToUpdate as any)[field] = Timestamp.fromDate(dataToUpdate[field] as Date);
         }
       });
+      
+      // Ensure interviewDetails.date is a string if provided
+      if (dataToUpdate.interviewDetails && dataToUpdate.interviewDetails.date instanceof Date) {
+          dataToUpdate.interviewDetails.date = format(dataToUpdate.interviewDetails.date, "PPP");
+      }
+
 
       await updateDoc(appRef, dataToUpdate as DocumentData);
       setAllJobApplications(prev => prev.map(app => app.id === applicationId ? convertTimestampsToDates({ ...app, ...data, id: applicationId }) as JobApplication : app)
-        .sort((a, b) => b.appliedAt.getTime() - a.appliedAt.getTime()));
+        .sort((a, b) => new Date(b.appliedAt).getTime() - new Date(a.appliedAt).getTime()));
       return true;
     } catch (error) {
       console.error("Error updating job application:", error);
       return false;
     }
-  }, [setAllJobApplications]);
-
-  const convertDatesToTimestampsInObject = (obj: any) => {
-    const newObj: any = { ...obj };
-    for (const key in newObj) {
-        if (newObj[key] instanceof Date && !(newObj[key] instanceof Timestamp)) {
-            newObj[key] = Timestamp.fromDate(newObj[key]);
-        } else if (typeof newObj[key] === 'string' && (key === 'date') && !isNaN(Date.parse(newObj[key]))) {
-           // Assuming 'date' field in interviewDetails might be string, ensure it's handled if needed, though Firestore usually manages direct Date objects well.
-           // This is more defensive; usually direct Date object is fine.
-        }
-    }
-    return newObj;
-  };
-
+  }, []);
 
   const fetchApplicationsForCandidate = useCallback(async (candidateId: string): Promise<JobApplication[]> => {
     if (!db) return [];
@@ -419,6 +408,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         orderBy("appliedAt", "desc")
       );
       const querySnapshot = await getDocs(q);
+      console.log(`[AppContext] fetchApplicationsForCandidate for ${candidateId} found ${querySnapshot.docs.length} applications.`);
       return querySnapshot.docs.map(docSnapshot => convertTimestampsToDates({ id: docSnapshot.id, ...docSnapshot.data() }) as JobApplication);
     } catch (error) {
       console.error("Error fetching applications for candidate:", error);
@@ -456,9 +446,9 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         overallStatus: newStatus,
         overallStatusLastUpdatedAt: now,
       };
-      await updateDoc(candidateRef, statusUpdateData);
+      await updateDoc(candidateRef, statusUpdateData as DocumentData);
       setCandidates(prev => prev.map(c => c.id === candidateId ? convertTimestampsToDates({...c, ...statusUpdateData, id: candidateId }) as Candidate : c)
-          .sort((a, b) => (b.profileLastUpdatedAt?.getTime() || 0) - (a.profileLastUpdatedAt?.getTime() || 0))
+          .sort((a, b) => (new Date(b.profileLastUpdatedAt || 0).getTime()) - (new Date(a.profileLastUpdatedAt || 0).getTime()))
       );
 
       let emailSubject = "";
@@ -473,8 +463,9 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
             emailBody = `Dear ${candidateName},\n\nThis is a follow-up regarding your profile with TalentFlow AI. We're impressed with your background and would like to discuss potential opportunities. Please let us know your availability for a brief chat.\n\nBest regards,\nThe TalentFlow AI Team`;
             break;
           case 'interview_scheduled':
+            // This email is better handled by hrUpdateApplicationStatus which has specific interview details
             emailSubject = `Interview Process Update: TalentFlow AI`;
-            emailBody = `Dear ${candidateName},\n\nThis is to confirm that an interview has been scheduled as part of your application process with TalentFlow AI. Please refer to specific communications for details.\n\nBest regards,\nThe TalentFlow AI Team`;
+            emailBody = `Dear ${candidateName},\n\nThis is to confirm that your application process has moved to the interview stage with TalentFlow AI. Please refer to specific communications regarding your job application for interview details.\n\nBest regards,\nThe TalentFlow AI Team`;
             break;
           case 'offer_extended':
             emailSubject = `Congratulations: Offer from TalentFlow AI`;
@@ -485,10 +476,10 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
             emailBody = `Dear ${candidateName},\n\nWelcome aboard! We are thrilled to have you join the TalentFlow AI team. Your onboarding details will follow shortly.\n\nBest regards,\nThe TalentFlow AI Team`;
             break;
           case 'rejected_overall':
-             const isAutomatedRejection = candidateDetails.name === "Automated System"; // Name will be set to this in questionnaire page for auto rejection
+             const isAutomatedRejection = candidateName === "Automated System"; 
              if (isAutomatedRejection) {
                  emailSubject = `Update on Your Application with TalentFlow AI`;
-                 emailBody = `Dear ${candidateName},\n\nThank you for your interest and for completing the application process with TalentFlow AI. After an automated review based on the initial requirements and questionnaire, we have decided to pursue other candidates at this time.\n\nWe appreciate your time and wish you the best in your career endeavors.\n\nSincerely,\nThe TalentFlow AI Team`;
+                 emailBody = `Dear Candidate,\n\nThank you for your interest and for completing the application process with TalentFlow AI. After an automated review based on the initial requirements and questionnaire, we have decided to pursue other candidates at this time.\n\nWe appreciate your time and wish you the best in your career endeavors.\n\nSincerely,\nThe TalentFlow AI Team`;
              } else {
                  emailSubject = `Update on Your Profile with TalentFlow AI`;
                  emailBody = `Dear ${candidateName},\n\nThank you for your interest in TalentFlow AI. After careful consideration of your overall profile by our team, we have decided to pursue other candidates at this time.\n\nWe appreciate your time and wish you the best in your career endeavors.\n\nSincerely,\nThe TalentFlow AI Team`;
@@ -539,12 +530,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         if (newStatus === 'interview_scheduled') {
           await hrUpdateCandidateOverallStatus(appData.candidateId, 'interview_scheduled', { name: candidateName, email: candidateEmail });
         }
-        
-        setAllJobApplications(prev => prev.map(a =>
-          a.id === applicationId
-          ? convertTimestampsToDates({ ...a, ...updateData, id: applicationId }) as JobApplication
-          : a
-        ).sort((a,b) => b.appliedAt.getTime() - a.appliedAt.getTime()));
+        // Reflect change in local state if needed (e.g., for HR candidate profile view)
+        // This primarily affects candidate's own view via allJobApplications, so might not need update here for HR specific lists
       }
 
 
@@ -570,7 +557,70 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       console.error("Error updating application status by HR:", error);
       return false;
     }
-  }, [user, hrUpdateCandidateOverallStatus, setAllJobApplications]);
+  }, [user, hrUpdateCandidateOverallStatus]);
+
+  const batchScheduleInterviewsForJob = useCallback(async (
+    jobId: string, 
+    jobTitle: string
+  ): Promise<{ success: boolean; count: number; message: string }> => {
+    if (!db || !user) {
+      return { success: false, count: 0, message: "User not authenticated." };
+    }
+    console.log(`[AppContext] Starting batch schedule for job ID: ${jobId}`);
+    try {
+      const q = query(
+        collection(db, "jobApplications"),
+        where("jobId", "==", jobId),
+        where("status", "==", "under_review_hr"),
+        orderBy("appliedAt", "asc"), // Process older applications first
+        limit(10) // Max 10 interviews per batch action
+      );
+      const querySnapshot = await getDocs(q);
+      const eligibleApps = querySnapshot.docs.map(docSnap => convertTimestampsToDates({ id: docSnap.id, ...docSnap.data() }) as JobApplication);
+
+      if (eligibleApps.length === 0) {
+        return { success: true, count: 0, message: "No applications found in 'Under HR Review' status for this job." };
+      }
+
+      let scheduledCount = 0;
+      let interviewDateTime = new Date(); // Schedule for "today"
+      interviewDateTime.setHours(9, 0, 0, 0); // Start at 9:00 AM
+
+      for (const app of eligibleApps) {
+        if (scheduledCount >= 10) break; // Max 10 per day
+        if (interviewDateTime.getHours() >= 17) break; // Don't schedule past 5 PM (last slot starting 4:30 PM)
+
+        const formattedDate = format(interviewDateTime, "PPP"); // e.g., "May 23, 2025"
+        const formattedTime = format(interviewDateTime, "p");   // e.g., "9:00 AM"
+
+        const details: InterviewDetails = {
+          date: formattedDate,
+          time: formattedTime,
+          notes: `Automated first-round interview slot for ${jobTitle}.`,
+        };
+
+        const updateSuccess = await hrUpdateApplicationStatus(
+          app.id,
+          'interview_scheduled',
+          app.candidateEmailSnapshot || "",
+          app.candidateNameSnapshot || "",
+          jobTitle,
+          details
+        );
+
+        if (updateSuccess) {
+          scheduledCount++;
+        }
+        // Increment time for the next slot
+        interviewDateTime.setMinutes(interviewDateTime.getMinutes() + 30);
+      }
+      console.log(`[AppContext] Batch schedule complete for job ID: ${jobId}. Scheduled ${scheduledCount} interviews.`);
+      return { success: true, count: scheduledCount, message: `Successfully scheduled ${scheduledCount} interviews.` };
+    } catch (error: any) {
+      console.error("Error batch scheduling interviews:", error);
+      return { success: false, count: 0, message: `Failed to schedule interviews: ${error.message}` };
+    }
+  }, [user, hrUpdateApplicationStatus]);
 
 
   const contextValue: AppContextType = {
@@ -595,6 +645,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       fetchApplicationsForJob,
       hrUpdateApplicationStatus,
       hrUpdateCandidateOverallStatus,
+      batchScheduleInterviewsForJob,
   };
 
   return (
@@ -611,4 +662,3 @@ export const useAppContext = (): AppContextType => {
   }
   return context;
 };
-

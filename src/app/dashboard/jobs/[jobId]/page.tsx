@@ -2,7 +2,7 @@
 // src/app/dashboard/jobs/[jobId]/page.tsx
 "use client";
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAppContext } from '@/contexts/AppContext';
@@ -11,54 +11,94 @@ import { Loader } from '@/components/ui/loader';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { ArrowLeft, FileText, Users, XCircle, CheckCircle, Clock, CalendarDays, Briefcase } from 'lucide-react';
+import { ArrowLeft, FileText, Users, XCircle, Clock, CalendarDays, Briefcase, CalendarPlus } from 'lucide-react';
 import { format } from 'date-fns';
-import { Badge } from '@/components/ui/badge';
+import { useToast } from '@/hooks/use-toast';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 export default function JobDetailsPage() {
   const params = useParams();
   const router = useRouter();
-  const { getJobById, fetchApplicationsForJob, loadingData: contextLoading } = useAppContext();
+  const { getJobById, fetchApplicationsForJob, loadingData: contextLoading, batchScheduleInterviewsForJob } = useAppContext();
+  const { toast } = useToast();
 
   const jobId = typeof params.jobId === 'string' ? params.jobId : undefined;
 
-  const [job, setJob] = useState<Job | null | undefined>(undefined); // undefined initially, null if not found
+  const [job, setJob] = useState<Job | null | undefined>(undefined);
   const [applications, setApplications] = useState<JobApplication[]>([]);
   const [loadingJob, setLoadingJob] = useState(true);
   const [loadingApplications, setLoadingApplications] = useState(true);
+
+  const [isBatchScheduleDialogOpen, setIsBatchScheduleDialogOpen] = useState(false);
+  const [batchScheduling, setBatchScheduling] = useState(false);
 
   useEffect(() => {
     if (jobId) {
       setLoadingJob(true);
       const foundJob = getJobById(jobId);
-      setJob(foundJob); // Will be undefined if not found in current context jobs
-      setLoadingJob(false); // Stop loading once attempt is made
+      setJob(foundJob); 
+      setLoadingJob(false); 
 
-      if (foundJob) { // Only fetch apps if job is found
+      if (foundJob) { 
         setLoadingApplications(true);
         fetchApplicationsForJob(jobId)
-          .then(setApplications)
+          .then(fetchedApps => {
+            setApplications(fetchedApps);
+          })
           .catch(err => {
             console.error("Failed to fetch applications for job:", err);
-            setApplications([]); // Set to empty on error
+            setApplications([]); 
+            toast({ title: "Error", description: "Could not load applications for this job.", variant: "destructive" });
           })
           .finally(() => setLoadingApplications(false));
       } else {
-        setLoadingApplications(false); // No job, no apps to load
+        setLoadingApplications(false); 
         setApplications([]);
       }
     } else {
-      setJob(null); // No jobId, so job is not found
+      setJob(null); 
       setLoadingJob(false);
       setLoadingApplications(false);
     }
-  }, [jobId, getJobById, fetchApplicationsForJob]);
+  }, [jobId, getJobById, fetchApplicationsForJob, toast]);
+
+  const applicationsUnderReview = useMemo(() => {
+    return applications.filter(app => app.status === 'under_review_hr');
+  }, [applications]);
 
   const totalApplications = applications.length;
   const rejectedApplicationsCount = applications.filter(app => app.status.startsWith('rejected_')).length;
   const underProcessApplicationsCount = totalApplications - rejectedApplicationsCount;
 
   const isLoading = contextLoading || loadingJob || loadingApplications;
+
+  const handleConfirmBatchSchedule = async () => {
+    if (!jobId || !job) return;
+    setBatchScheduling(true);
+    const result = await batchScheduleInterviewsForJob(jobId, job.title);
+    setBatchScheduling(false);
+    setIsBatchScheduleDialogOpen(false);
+
+    if (result.success) {
+      toast({ title: "Batch Scheduling Complete", description: result.message });
+      // Re-fetch applications to update their statuses on the page
+      fetchApplicationsForJob(jobId)
+        .then(setApplications)
+        .catch(err => console.error("Failed to re-fetch applications after batch schedule:", err));
+    } else {
+      toast({ title: "Batch Scheduling Failed", description: result.message, variant: "destructive" });
+    }
+  };
+
 
   if (isLoading) {
     return (
@@ -69,7 +109,7 @@ export default function JobDetailsPage() {
     );
   }
 
-  if (job === null || job === undefined) { // Explicitly check for undefined too for initial state
+  if (job === null || job === undefined) { 
     return (
       <div className="flex flex-col items-center justify-center min-h-[calc(100vh-200px)] text-center">
         <Alert variant="destructive" className="max-w-md">
@@ -88,11 +128,20 @@ export default function JobDetailsPage() {
 
   return (
     <div className="space-y-6">
-      <Button asChild variant="outline">
-        <Link href="/dashboard/jobs">
-          <ArrowLeft className="mr-2 h-4 w-4" /> Back to Job Listings
-        </Link>
-      </Button>
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <Button asChild variant="outline">
+          <Link href="/dashboard/jobs">
+            <ArrowLeft className="mr-2 h-4 w-4" /> Back to Job Listings
+          </Link>
+        </Button>
+        {applicationsUnderReview.length > 0 && (
+           <Button onClick={() => setIsBatchScheduleDialogOpen(true)} disabled={batchScheduling}>
+            {batchScheduling ? <Loader size={16} className="mr-2" /> : <CalendarPlus className="mr-2 h-4 w-4" />}
+            Batch Schedule Interviews ({applicationsUnderReview.length})
+          </Button>
+        )}
+      </div>
+
 
       <Card className="shadow-lg">
         <CardHeader className="bg-muted/30 p-6">
@@ -146,7 +195,25 @@ export default function JobDetailsPage() {
             <p className="text-xs text-muted-foreground">These statistics are based on applications received for this job posting.</p>
         </CardFooter>
       </Card>
+
+       <AlertDialog open={isBatchScheduleDialogOpen} onOpenChange={setIsBatchScheduleDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirm Batch Interview Scheduling</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will schedule interviews for up to 10 candidates currently in 'Under HR Review' status for the job "{job.title}".
+              Interviews will be scheduled for today, starting at 9:00 AM with 30-minute intervals. Candidates will be notified (simulated email).
+              Are you sure you want to proceed?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setIsBatchScheduleDialogOpen(false)} disabled={batchScheduling}>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirmBatchSchedule} disabled={batchScheduling}>
+              {batchScheduling ? <Loader size={16} className="mr-2" /> : "Yes, Schedule Interviews"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
-
