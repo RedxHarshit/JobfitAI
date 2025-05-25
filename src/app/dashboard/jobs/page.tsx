@@ -103,8 +103,10 @@ export default function JobsPage() {
                 </p>
               </CardContent>
               <CardFooter className="flex justify-between items-center gap-2">
-                <Button variant="outline" className="flex-grow" disabled>
-                  <Eye className="mr-2 h-4 w-4" /> View Details (Coming Soon)
+                <Button asChild variant="outline" className="flex-grow">
+                  <Link href={`/dashboard/jobs/${job.id}`}>
+                    <Eye className="mr-2 h-4 w-4" /> View Details
+                  </Link>
                 </Button>
                 <Button 
                   variant="destructive" 
