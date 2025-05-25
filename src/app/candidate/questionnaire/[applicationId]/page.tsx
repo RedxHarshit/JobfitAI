@@ -17,18 +17,15 @@ import { scoreApplication } from '@/ai/flows/score-application';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
-import { useAuth } from '@/contexts/AuthContext'; // For getting user UID if needed for logs
-// Removed Firestore imports for mail collection as we are reverting to simulation
-// import { db } from '@/lib/firebase';
-// import { collection, addDoc } from 'firebase/firestore';
+import { useAuth } from '@/contexts/AuthContext';
 
 
 export default function CandidateQuestionnairePage() {
   const params = useParams();
   const router = useRouter();
-  const { getJobApplicationById, updateJobApplication } = useAppContext();
+  const { getJobApplicationById, updateJobApplication, hrUpdateCandidateOverallStatus } = useAppContext(); // Added hrUpdateCandidateOverallStatus
   const { toast } = useToast();
-  const { user } = useAuth(); // Get current user
+  const { user } = useAuth();
 
   const applicationId = typeof params.applicationId === 'string' ? params.applicationId : undefined;
 
@@ -39,8 +36,10 @@ export default function CandidateQuestionnairePage() {
   const [submitting, setSubmitting] = useState(false);
   const [answers, setAnswers] = useState<Record<string, string>>({});
 
-  const stableGetJobApplicationById = useCallback(getJobApplicationById, [getJobApplicationById]);
-  const stableUpdateJobApplication = useCallback(updateJobApplication, [updateJobApplication]);
+  const stableGetJobApplicationById = useCallback(getJobApplicationById, []); // Removed getJobApplicationById from deps
+  const stableUpdateJobApplication = useCallback(updateJobApplication, []); // Removed updateJobApplication from deps
+  const stableHrUpdateCandidateOverallStatus = useCallback(hrUpdateCandidateOverallStatus, []); // Added
+
 
   useEffect(() => {
     if (!applicationId) {
@@ -140,8 +139,8 @@ export default function CandidateQuestionnairePage() {
   };
 
   const handleSubmitQuestionnaire = async () => {
-    if (!applicationId || !application || !application.questions) {
-        toast({ title: "Error", description: "Application data not loaded.", variant: "destructive" });
+    if (!applicationId || !application || !application.questions || !user) { // Added !user check
+        toast({ title: "Error", description: "Application data not loaded or user not authenticated.", variant: "destructive" });
         return;
     }
 
@@ -171,6 +170,7 @@ export default function CandidateQuestionnairePage() {
       const jobDescForScoring = application.jobDescription;
       const answersForScoring = formattedAnswers;
       const candidateEmailForNotification = application.candidateEmailSnapshot;
+      const candidateNameForNotification = application.candidateNameSnapshot;
 
       console.log("[QuestionnairePage] Submitting questionnaire, preparing for AI scoring with inputs:", { resumeText: resumeTextForScoring ? 'Available' : 'MISSING', jobDescription: jobDescForScoring ? 'Available' : 'MISSING', answers: answersForScoring });
 
@@ -179,7 +179,7 @@ export default function CandidateQuestionnairePage() {
         throw new Error("Missing resume, job description, or answers for scoring. Cannot proceed with automated scoring.");
       }
 
-      let finalStatus: JobApplication['status'] = 'under_review_hr'; 
+      let finalStatus: JobApplication['status'] = 'under_review_hr';
       let scoreData: Partial<JobApplication> = {};
 
       try {
@@ -197,11 +197,18 @@ export default function CandidateQuestionnairePage() {
           if (scoringResult.score < 50) {
             finalStatus = 'rejected_auto';
             console.log(`[QuestionnairePage] Automated Rejection for App ID ${applicationId} (Candidate: ${candidateEmailForNotification || 'N/A'}): Score ${scoringResult.score}. Simulating rejection email.`);
-            // SIMULATING EMAIL SENDING
+            // Also update candidate's overall status
+            await stableHrUpdateCandidateOverallStatus(
+              application.candidateId, 
+              'rejected_overall', 
+              { email: candidateEmailForNotification, name: candidateNameForNotification }
+            );
+            console.log(`[QuestionnairePage] Candidate ${application.candidateId} overall status updated to rejected_overall due to low score.`);
+
           } else {
             finalStatus = 'under_review_hr';
             console.log(`[QuestionnairePage] Application for App ID ${applicationId} (Candidate: ${candidateEmailForNotification || 'N/A'}) scored ${scoringResult.score}. Status set to under_review_hr. Simulating HR notification.`);
-            // SIMULATING HR NOTIFICATION
+            // HR notification simulation (console.log for now)
           }
         } else {
             console.error("[QuestionnairePage] Invalid scoring result from AI:", scoringResult);
@@ -210,8 +217,8 @@ export default function CandidateQuestionnairePage() {
       } catch (scoringError: any) {
         console.error("[QuestionnairePage] Error DIRECTLY FROM scoreApplication or during its processing:", scoringError);
         toast({ title: "Automated Scoring Failed", description: "Your application will be reviewed manually. " + (scoringError.message || "Unknown scoring error."), variant: "default", duration: 7000 });
-        finalStatus = 'review_needed_scoring_failed'; 
-        scoreData.score = undefined; 
+        finalStatus = 'review_needed_scoring_failed';
+        scoreData.score = undefined;
         scoreData.scoreJustification = "Automated scoring failed: " + (scoringError.message || "Unknown error");
       }
 
