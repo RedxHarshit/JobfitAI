@@ -61,6 +61,8 @@ interface AppContextType {
   getJobApplicationById: (applicationId: string) => Promise<JobApplication | null>;
   updateJobApplication: (applicationId: string, data: Partial<Omit<JobApplication, 'id'>>) => Promise<boolean>;
   fetchCandidateProfile: (currentAuthUserUid: string) => Promise<Candidate | null>;
+  fetchApplicationsForCandidate: (candidateId: string) => Promise<JobApplication[]>;
+  hrUpdateApplicationStatus: (applicationId: string, newStatus: 'accepted' | 'rejected_hr', candidateEmail: string, candidateName: string, jobTitle: string) => Promise<boolean>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -84,7 +86,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
             const profileData = convertTimestampsToDates({
                 id: candidateProfileSnap.id,
                 ...candidateProfileSnap.data(),
-                userId: currentAuthUserUid
+                userId: currentAuthUserUid // Ensure userId is the auth UID for self-profile
             }) as Candidate;
             setUserCandidateProfile(profileData);
             return profileData;
@@ -96,7 +98,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         setUserCandidateProfile(null);
         return null;
     }
-  }, []); // db is stable after init
+  }, []);
 
   const fetchData = useCallback(async (currentAuthUser: ReturnType<typeof useAuth>['user']) => {
     if (!db) {
@@ -120,20 +122,22 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       setJobs(fetchedJobs);
 
       if (currentAuthUser) {
-        const hrCandidatesQuery = query(collection(db, "candidates"), where("userId", "==", currentAuthUser.uid));
-        const hrCandidatesSnapshot = await getDocs(hrCandidatesQuery);
-        const fetchedHrCandidates: Candidate[] = hrCandidatesSnapshot.docs
-          .filter(docSnapshot => docSnapshot.id !== currentAuthUser.uid)
-          .map(docSnapshot => {
-            const data = docSnapshot.data();
-            return convertTimestampsToDates({
-              id: docSnapshot.id,
-              ...data,
-            }) as Candidate;
-          }).sort((a, b) => (b.profileLastUpdatedAt?.getTime() || 0) - (a.profileLastUpdatedAt?.getTime() || 0));
-        setCandidates(fetchedHrCandidates);
+        // Fetch ALL candidates for the HR portal view
+        const allCandidatesQuery = query(collection(db, "candidates"), orderBy("profileLastUpdatedAt", "desc"));
+        const allCandidatesSnapshot = await getDocs(allCandidatesQuery);
+        const fetchedCandidatesList: Candidate[] = allCandidatesSnapshot.docs.map(docSnapshot => {
+          return convertTimestampsToDates({
+            id: docSnapshot.id,
+            ...docSnapshot.data(),
+          }) as Candidate;
+        });
+        setCandidates(fetchedCandidatesList);
+
+        // Fetch the specific candidate profile if the logged-in user IS a candidate
+        // This populates userCandidateProfile, used by the /candidate portal
         await fetchCandidateProfile(currentAuthUser.uid);
       } else {
+        // No user logged in
         setCandidates([]);
         setUserCandidateProfile(null);
       }
@@ -142,18 +146,10 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     } finally {
       setLoadingData(false);
     }
-  }, [fetchCandidateProfile]); // db is stable
+  }, [fetchCandidateProfile]); 
 
   useEffect(() => {
-    if (user) {
-        fetchData(user);
-    } else {
-        // Clear data if user logs out
-        setCandidates([]);
-        setJobs([]);
-        setUserCandidateProfile(null);
-        setLoadingData(false);
-    }
+    fetchData(user); // Pass user to fetchData
   }, [user, fetchData]);
 
   const addCandidate = useCallback(async (candidateData: Omit<Candidate, "id" | "userId" | "profileLastUpdatedAt">): Promise<Candidate | null> => {
@@ -161,7 +157,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     try {
       const dataToSave: Omit<Candidate, "id"> = {
         ...candidateData,
-        userId: user.uid,
+        userId: user.uid, // HR's UID
         profileLastUpdatedAt: new Date(),
         interviewQuestions: candidateData.interviewQuestions || [],
         parsedText: candidateData.parsedText || "",
@@ -174,7 +170,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       console.error("Error adding candidate to Firestore (HR):", error);
       return null;
     }
-  }, [user]); // db and setCandidates are stable
+  }, [user]);
 
   const saveCandidateDataForUser = useCallback(async (candidateAuthUid: string, candidateProfileData: Omit<Candidate, "id" | "userId" | "profileLastUpdatedAt"> & { userId: string }): Promise<Candidate | null> => {
     if (!db) return null;
@@ -183,21 +179,26 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       return null;
     }
     try {
-      const candidateDocRef = doc(db, "candidates", candidateAuthUid);
+      const candidateDocRef = doc(db, "candidates", candidateAuthUid); // Doc ID is candidate's auth UID
       const dataToSave: Candidate = {
         ...candidateProfileData,
-        id: candidateAuthUid,
+        id: candidateAuthUid, // id is candidate's auth UID
+        userId: candidateAuthUid, // userId is also candidate's auth UID
         profileLastUpdatedAt: new Date(),
         parsedText: candidateProfileData.parsedText || "",
       };
       await setDoc(candidateDocRef, dataToSave, { merge: true });
-      setUserCandidateProfile(dataToSave);
+      setUserCandidateProfile(dataToSave); // For immediate update in candidate's own view
+      // Also update in the main candidates list for HR view consistency
+      setCandidates(prev => prev.map(c => c.id === candidateAuthUid ? dataToSave : c)
+                                .sort((a, b) => (b.profileLastUpdatedAt?.getTime() || 0) - (a.profileLastUpdatedAt?.getTime() || 0))
+      );
       return dataToSave;
     } catch (error) {
       console.error("Error saving candidate data to Firestore (User):", error);
       return null;
     }
-  }, [setUserCandidateProfile]); // db and setUserCandidateProfile are stable
+  }, [setUserCandidateProfile, setCandidates]); 
 
   const addJob = useCallback(async (jobData: Omit<Job, "id" | "userId" | "createdAt">): Promise<Job | null> => {
     if (!user || !db) return null;
@@ -221,7 +222,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       console.error("Error adding job to Firestore:", error);
       return null;
     }
-  }, [user, setJobs]); // db and setJobs are stable
+  }, [user, setJobs]); 
 
   const updateCandidate = useCallback(async (updatedCandidate: Candidate) => {
     if (!db) return;
@@ -241,7 +242,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     } catch (error) {
       console.error("Error updating candidate in Firestore:", error);
     }
-  }, [setCandidates, userCandidateProfile, setUserCandidateProfile]); // db is stable
+  }, [setCandidates, userCandidateProfile, setUserCandidateProfile]);
 
   const deleteCandidate = useCallback(async (candidateId: string): Promise<boolean> => {
     if (!db) return false;
@@ -257,7 +258,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       console.error("Error deleting candidate from Firestore:", error);
       return false;
     }
-  }, [setCandidates, userCandidateProfile, setUserCandidateProfile]); // db is stable
+  }, [setCandidates, userCandidateProfile, setUserCandidateProfile]);
 
   const getCandidateById = useCallback((id: string) => {
     if (userCandidateProfile && userCandidateProfile.id === id) return userCandidateProfile;
@@ -272,13 +273,13 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       return null;
     }
     let currentCandidateProfile = userCandidateProfile;
-    if (!currentCandidateProfile || !currentCandidateProfile.parsedText) {
-      // Attempt to fetch profile if not loaded or missing parsedText
+    // If profile isn't loaded in context, or crucial parsedText is missing, try fetching fresh.
+    if (!currentCandidateProfile || !currentCandidateProfile.parsedText) { 
       currentCandidateProfile = await fetchCandidateProfile(user.uid);
     }
 
     if (!currentCandidateProfile || !currentCandidateProfile.parsedText) {
-      console.error("Candidate profile or resume text not available. Please upload/update resume.");
+      console.error("Candidate profile or resume text not available for application. Please upload/update resume.");
       return null;
     }
 
@@ -293,8 +294,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         jobDescription: job.description,
         status: 'questionnaire_pending',
         appliedAt: Timestamp.fromDate(new Date()),
-        questions: [], // Initialize with empty array
-        answers: [],   // Initialize with empty array
+        questions: [], 
+        answers: [],   
       };
       const docRef = await addDoc(collection(db, "jobApplications"), applicationData);
       return docRef.id;
@@ -302,7 +303,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       console.error("Error starting job application:", error);
       return null;
     }
-  }, [user, userCandidateProfile, fetchCandidateProfile]); // db is stable
+  }, [user, userCandidateProfile, fetchCandidateProfile]);
 
   const getJobApplicationById = useCallback(async (applicationId: string): Promise<JobApplication | null> => {
     if (!db || !applicationId) return null;
@@ -317,7 +318,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       console.error("Error fetching job application:", error);
       return null;
     }
-  }, []); // db is stable
+  }, []); 
 
   const updateJobApplication = useCallback(async (applicationId: string, data: Partial<Omit<JobApplication, 'id'>>): Promise<boolean> => {
     if (!db || !applicationId) return false;
@@ -335,7 +336,60 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       console.error("Error updating job application:", error);
       return false;
     }
-  }, []); // db is stable
+  }, []); 
+
+  const fetchApplicationsForCandidate = useCallback(async (candidateId: string): Promise<JobApplication[]> => {
+    if (!db) return [];
+    try {
+      const q = query(
+        collection(db, "jobApplications"),
+        where("candidateId", "==", candidateId),
+        orderBy("appliedAt", "desc")
+      );
+      const querySnapshot = await getDocs(q);
+      return querySnapshot.docs.map(docSnapshot => convertTimestampsToDates({ id: docSnapshot.id, ...docSnapshot.data() }) as JobApplication);
+    } catch (error) {
+      console.error("Error fetching applications for candidate:", error);
+      return [];
+    }
+  }, []);
+
+  const hrUpdateApplicationStatus = useCallback(async (
+    applicationId: string,
+    newStatus: 'accepted' | 'rejected_hr',
+    candidateEmail: string,
+    candidateName: string,
+    jobTitle: string
+  ): Promise<boolean> => {
+    if (!db) return false;
+    try {
+      const appRef = doc(db, "jobApplications", applicationId);
+      await updateDoc(appRef, {
+        status: newStatus,
+        reviewedByHrAt: Timestamp.fromDate(new Date()),
+      });
+
+      // Simulate email
+      let emailSubject = "";
+      let emailBody = "";
+      if (newStatus === 'accepted') {
+        emailSubject = `Congratulations on your application for ${jobTitle}!`;
+        emailBody = `Dear ${candidateName},\n\nWe are pleased to inform you that your application for the ${jobTitle} position has been successful! We will be in touch shortly with the next steps.\n\nBest regards,\nTalentFlow AI Team`;
+        console.log(`[AppContext] Simulating ACCEPTANCE email to ${candidateEmail}. Subject: ${emailSubject}`);
+      } else if (newStatus === 'rejected_hr') {
+        emailSubject = `Update on your application for ${jobTitle}`;
+        emailBody = `Dear ${candidateName},\n\nThank you for your interest in the ${jobTitle} position. After careful consideration, we have decided to move forward with other candidates whose qualifications more closely match the requirements of this role at this time.\n\nWe appreciate you taking the time to apply and wish you the best in your job search.\n\nBest regards,\nTalentFlow AI Team`;
+        console.log(`[AppContext] Simulating REJECTION email to ${candidateEmail}. Subject: ${emailSubject}`);
+      }
+      console.log("Email body for simulation:\n", emailBody);
+
+      return true;
+    } catch (error) {
+      console.error("Error updating application status by HR:", error);
+      return false;
+    }
+  }, []);
+
 
   return (
     <AppContext.Provider value={{
@@ -354,6 +408,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         getJobApplicationById,
         updateJobApplication,
         fetchCandidateProfile,
+        fetchApplicationsForCandidate,
+        hrUpdateApplicationStatus,
     }}>
       {children}
     </AppContext.Provider>
@@ -367,3 +423,4 @@ export const useAppContext = (): AppContextType => {
   }
   return context;
 };
+
