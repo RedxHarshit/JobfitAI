@@ -10,7 +10,7 @@ import { Loader } from '@/components/ui/loader';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { ArrowLeft, Lightbulb, Send, CheckCircle } from 'lucide-react';
+import { ArrowLeft, Lightbulb, Send, CheckCircle, BookOpen } from 'lucide-react';
 import Link from 'next/link';
 import { generateQuestionnaireForApplication } from '@/ai/flows/generate-questionnaire';
 import { scoreApplication } from '@/ai/flows/score-application';
@@ -18,6 +18,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 
 
 export default function CandidateQuestionnairePage() {
@@ -36,9 +37,9 @@ export default function CandidateQuestionnairePage() {
   const [submitting, setSubmitting] = useState(false);
   const [answers, setAnswers] = useState<Record<string, string>>({});
 
-  const stableGetJobApplicationById = useCallback(getJobApplicationById, []);
-  const stableUpdateJobApplication = useCallback(updateJobApplication, []);
-  const stableHrUpdateCandidateOverallStatus = useCallback(hrUpdateCandidateOverallStatus, []);
+  const stableGetJobApplicationById = useCallback(getJobApplicationById, [getJobApplicationById]);
+  const stableUpdateJobApplication = useCallback(updateJobApplication, [updateJobApplication]);
+  const stableHrUpdateCandidateOverallStatus = useCallback(hrUpdateCandidateOverallStatus, [hrUpdateCandidateOverallStatus]);
 
 
   useEffect(() => {
@@ -264,7 +265,7 @@ export default function CandidateQuestionnairePage() {
           <AlertDescription>{error}</AlertDescription>
         </Alert>
         <Button asChild variant="outline" className="mt-4">
-          <Link href="/candidate/dashboard/jobs">
+          <Link href="/candidate/dashboard/jobs" className="flex items-center">
             <ArrowLeft className="mr-2 h-4 w-4" /> Back to Jobs
           </Link>
         </Button>
@@ -280,7 +281,7 @@ export default function CandidateQuestionnairePage() {
           <AlertDescription>The application details could not be loaded.</AlertDescription>
         </Alert>
          <Button asChild variant="outline" className="mt-4">
-          <Link href="/candidate/dashboard/jobs">
+          <Link href="/candidate/dashboard/jobs" className="flex items-center">
             <ArrowLeft className="mr-2 h-4 w-4" /> Back to Jobs
           </Link>
         </Button>
@@ -295,8 +296,8 @@ export default function CandidateQuestionnairePage() {
     return (
       <div className="max-w-3xl mx-auto space-y-6 text-center">
          <Button asChild variant="outline" className="mb-6 mr-auto block">
-            <Link href="/candidate/dashboard/jobs">
-            <ArrowLeft className="mr-2 h-4 w-4" /> Back to Job Listings
+            <Link href="/candidate/dashboard/jobs" className="flex items-center">
+              <ArrowLeft className="mr-2 h-4 w-4" /> Back to Job Listings
             </Link>
         </Button>
         <Card className="shadow-lg">
@@ -322,7 +323,7 @@ export default function CandidateQuestionnairePage() {
   return (
     <div className="max-w-3xl mx-auto space-y-6">
       <Button asChild variant="outline">
-        <Link href="/candidate/dashboard/jobs">
+        <Link href="/candidate/dashboard/jobs" className="flex items-center"> {/* Ensure flex and items-center for link too */}
           <ArrowLeft className="mr-2 h-4 w-4" /> Back to Job Listings
         </Link>
       </Button>
@@ -338,6 +339,21 @@ export default function CandidateQuestionnairePage() {
           </div>
         </CardHeader>
         <CardContent className="space-y-6">
+          {application.jobDescription && (
+            <Accordion type="single" collapsible className="w-full">
+              <AccordionItem value="job-description">
+                <AccordionTrigger className="text-md font-semibold text-primary hover:no-underline">
+                  <BookOpen className="mr-2 h-5 w-5" /> View Job Description
+                </AccordionTrigger>
+                <AccordionContent>
+                  <div className="p-4 bg-muted/50 rounded-md prose dark:prose-invert max-w-none max-h-96 overflow-y-auto whitespace-pre-line">
+                    {application.jobDescription}
+                  </div>
+                </AccordionContent>
+              </AccordionItem>
+            </Accordion>
+          )}
+
           {generatingQuestions && (
             <div className="flex flex-col items-center justify-center p-8">
               <Loader size={32} />
@@ -388,4 +404,7 @@ export default function CandidateQuestionnairePage() {
     </div>
   );
 }
+
+    
+        
 

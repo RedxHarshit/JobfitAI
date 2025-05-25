@@ -7,13 +7,19 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { useAppContext } from '@/contexts/AppContext';
 import { useAuth } from '@/contexts/AuthContext';
-import { Briefcase, ArrowLeft, PlayCircle, LoaderIcon, CheckCircle } from 'lucide-react';
+import { Briefcase, ArrowLeft, PlayCircle, LoaderIcon, CheckCircle, BookOpen } from 'lucide-react';
 import { format } from 'date-fns';
 import { Loader } from '@/components/ui/loader';
 import { useRouter } from 'next/navigation';
 import { useToast } from '@/hooks/use-toast';
 import type { Job, JobApplication } from '@/types';
 import { useState, useMemo } from 'react';
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
 
 export default function CandidateJobsPage() {
   const { user } = useAuth();
@@ -61,6 +67,8 @@ export default function CandidateJobsPage() {
       if (isNew) {
         toast({ title: "Application Started!", description: `Proceed to the questionnaire for ${job.title}.` });
       } else {
+        // This case should ideally not be hit if existingApplication check above is robust,
+        // but good to have for completeness if startJobApplication detects an existing one.
         toast({ title: "Application Already Exists", description: `Resuming application for ${job.title}.` });
       }
       router.push(`/candidate/questionnaire/${applicationId}`);
@@ -86,7 +94,7 @@ export default function CandidateJobsPage() {
           <h1 className="text-3xl font-bold">Available Job Postings</h1>
         </div>
         <Button asChild variant="outline">
-          <Link href="/candidate/dashboard">
+          <Link href="/candidate/dashboard" className="flex items-center"> {/* Ensure flex and items-center for link too */}
             <ArrowLeft className="mr-2 h-4 w-4" /> Back to Dashboard
           </Link>
         </Button>
@@ -105,7 +113,7 @@ export default function CandidateJobsPage() {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2"> {/* Adjusted grid for better single column view initially */}
           {jobs.map((job) => {
             const existingApplication = candidateApplicationsMap.get(job.id);
             const hasApplied = !!existingApplication;
@@ -119,9 +127,18 @@ export default function CandidateJobsPage() {
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="flex-grow">
-                  <p className="text-sm text-muted-foreground line-clamp-4">
-                    {job.description}
-                  </p>
+                  <Accordion type="single" collapsible className="w-full">
+                    <AccordionItem value="job-description">
+                      <AccordionTrigger className="text-sm font-semibold text-primary hover:no-underline py-2">
+                         <BookOpen className="mr-2 h-4 w-4" /> View Full Job Description
+                      </AccordionTrigger>
+                      <AccordionContent>
+                        <div className="mt-2 p-3 bg-muted/30 rounded-md prose dark:prose-invert max-w-none max-h-60 overflow-y-auto whitespace-pre-line text-sm">
+                          {job.description}
+                        </div>
+                      </AccordionContent>
+                    </AccordionItem>
+                  </Accordion>
                 </CardContent>
                 <CardFooter>
                    <Button 
@@ -150,3 +167,4 @@ export default function CandidateJobsPage() {
     </div>
   );
 }
+
