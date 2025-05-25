@@ -1,0 +1,113 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+}
+
+@layer base {
+  :root {
+    --background: 190 67% 93%; /* #E0F7FA - Very Light Blue */
+    --foreground: 210 17% 20%; /* Dark Slate Blue for text */
+
+    --card: 190 50% 97%; /* Very Light Blue-White */
+    --card-foreground: 210 17% 20%;
+
+    --popover: 190 50% 97%;
+    --popover-foreground: 210 17% 20%;
+
+    --primary: 197 71% 53%; /* #29ABE2 - Vibrant Blue */
+    --primary-foreground: 0 0% 100%; /* White */
+
+    --secondary: 190 50% 88%; /* Lighter Blue for secondary elements */
+    --secondary-foreground: 210 17% 25%;
+
+    --muted: 190 40% 80%; /* Muted Blue */
+    --muted-foreground: 190 20% 45%; /* Darker Muted Blue */
+
+    --accent: 120 73% 75%; /* #90EE90 - Light Green */
+    --accent-foreground: 120 30% 25%; /* Dark Green for text on accent */
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 190 30% 80%; /* Blue-toned border */
+    --input: 190 30% 85%; /* Blue-toned input background */
+    --ring: 197 71% 53%; /* Vibrant Blue for focus rings */
+
+    --radius: 0.5rem;
+
+    /* Chart colors - can be adjusted to fit the theme */
+    --chart-1: 197 71% 53%; /* Primary Blue */
+    --chart-2: 120 60% 65%; /* A slightly desaturated Green */
+    --chart-3: 210 50% 60%; /* A Slate Blue */
+    --chart-4: 43 74% 66%;
+    --chart-5: 27 87% 67%;
+
+    /* Sidebar specific theme */
+    --sidebar-background: 190 50% 90%; /* Slightly darker light blue */
+    --sidebar-foreground: 210 17% 25%;
+    --sidebar-primary: 197 71% 53%; /* Same as main primary */
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 190 60% 85%; /* Lighter shade for hover */
+    --sidebar-accent-foreground: 197 65% 48%; /* Darker primary for text on sidebar accent */
+    --sidebar-border: 190 30% 75%;
+    --sidebar-ring: 197 71% 53%;
+  }
+
+  .dark {
+    /* Define dark theme if needed, for now, keeping it consistent with light or providing a generic dark */
+    --background: 210 20% 12%;
+    --foreground: 190 20% 90%;
+
+    --card: 210 20% 15%;
+    --card-foreground: 190 20% 90%;
+
+    --popover: 210 20% 15%;
+    --popover-foreground: 190 20% 90%;
+
+    --primary: 197 71% 53%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 210 20% 25%;
+    --secondary-foreground: 190 20% 90%;
+
+    --muted: 210 20% 20%;
+    --muted-foreground: 190 20% 65%;
+
+    --accent: 120 60% 60%;
+    --accent-foreground: 120 25% 95%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 210 20% 30%;
+    --input: 210 20% 28%;
+    --ring: 197 71% 53%;
+    
+    --chart-1: 197 65% 60%;
+    --chart-2: 120 55% 55%;
+    --chart-3: 210 45% 50%;
+    --chart-4: 43 70% 60%;
+    --chart-5: 27 80% 60%;
+
+    --sidebar-background: 210 20% 10%;
+    --sidebar-foreground: 190 15% 85%;
+    --sidebar-primary: 197 71% 53%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 210 20% 20%;
+    --sidebar-accent-foreground: 197 65% 60%;
+    --sidebar-border: 210 20% 25%;
+    --sidebar-ring: 197 71% 53%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
