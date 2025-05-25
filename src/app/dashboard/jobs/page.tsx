@@ -1,3 +1,4 @@
+
 // src/app/dashboard/jobs/page.tsx
 "use client";
 
@@ -5,12 +6,46 @@ import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { useAppContext } from '@/contexts/AppContext';
-import { Briefcase, PlusCircle, Eye } from 'lucide-react';
+import { Briefcase, PlusCircle, Eye, Trash2 } from 'lucide-react';
 import { format } from 'date-fns';
 import { Loader } from '@/components/ui/loader';
+import { useState } from 'react';
+import { useToast } from '@/hooks/use-toast';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import type { Job } from '@/types';
 
 export default function JobsPage() {
-  const { jobs, loadingData } = useAppContext();
+  const { jobs, loadingData, deleteJob } = useAppContext();
+  const { toast } = useToast();
+  const [jobToDelete, setJobToDelete] = useState<Job | null>(null);
+
+  const handleDeleteConfirm = async () => {
+    if (!jobToDelete) return;
+
+    const success = await deleteJob(jobToDelete.id);
+    if (success) {
+      toast({
+        title: "Job Deleted",
+        description: `The job "${jobToDelete.title}" has been removed.`,
+      });
+    } else {
+      toast({
+        title: "Deletion Failed",
+        description: "Could not delete job. Please try again.",
+        variant: "destructive",
+      });
+    }
+    setJobToDelete(null);
+  };
 
   if (loadingData) {
     return (
@@ -67,16 +102,43 @@ export default function JobsPage() {
                   {job.description}
                 </p>
               </CardContent>
-              <CardFooter>
-                {/* Placeholder for view/edit actions in future */}
-                 <Button variant="outline" className="w-full" disabled>
+              <CardFooter className="flex justify-between items-center gap-2">
+                <Button variant="outline" className="flex-grow" disabled>
                   <Eye className="mr-2 h-4 w-4" /> View Details (Coming Soon)
+                </Button>
+                <Button 
+                  variant="destructive" 
+                  size="icon" 
+                  onClick={() => setJobToDelete(job)}
+                  aria-label="Delete job"
+                >
+                  <Trash2 className="h-4 w-4" />
                 </Button>
               </CardFooter>
             </Card>
           ))}
         </div>
       )}
+      <AlertDialog open={!!jobToDelete} onOpenChange={(open) => !open && setJobToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
+            {jobToDelete && (
+              <AlertDialogDescription>
+                This action cannot be undone. This will permanently delete the job posting
+                for "{jobToDelete.title}". This might also affect any candidates matched to this job.
+              </AlertDialogDescription>
+            )}
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setJobToDelete(null)}>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDeleteConfirm} className="bg-destructive hover:bg-destructive/90">
+              Yes, delete job
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
+
