@@ -1,4 +1,4 @@
-# **App Name**: TalentFlow AI
+# **App Name**: JobFit AI
 
 ## Core Features:
 
