@@ -1,4 +1,3 @@
-
 // src/app/candidate/questionnaire/[applicationId]/page.tsx
 "use client";
 
@@ -19,12 +18,34 @@ import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
-import { db } from "@/lib/firebase"; // Import db
-import {
-  collection, // Import collection
-  addDoc,      // Import addDoc
-  serverTimestamp, // Import serverTimestamp
-} from "firebase/firestore";
+// No longer writing to Firestore mail collection directly
+// import { db } from "@/lib/firebase"; 
+// import {
+//   collection, 
+//   addDoc,      
+//   serverTimestamp, 
+// } from "firebase/firestore";
+
+// Function to call our Next.js API route for sending emails
+const sendEmailViaApi = async (to: string, subject: string, html: string, text: string) => {
+  try {
+    const response = await fetch('/api/send-email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ to, subject, html, text }),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      console.error(`[sendEmailViaApi] Failed to send email to ${to}:`, result.error, result.details);
+      return false;
+    }
+    console.log(`[sendEmailViaApi] Email API call successful for ${to}.`);
+    return true;
+  } catch (error) {
+    console.error(`[sendEmailViaApi] Error calling email API for ${to}:`, error);
+    return false;
+  }
+};
 
 
 export default function CandidateQuestionnairePage() {
@@ -43,9 +64,9 @@ export default function CandidateQuestionnairePage() {
   const [submitting, setSubmitting] = useState(false);
   const [answers, setAnswers] = useState<Record<string, string>>({});
 
-  const stableGetJobApplicationById = useCallback(getJobApplicationById, []); // Removed getJobApplicationById from deps
-  const stableUpdateJobApplication = useCallback(updateJobApplication, []); // Removed updateJobApplication from deps
-  const stableHrUpdateCandidateOverallStatus = useCallback(hrUpdateCandidateOverallStatus, []); // Removed hrUpdateCandidateOverallStatus from deps
+  const stableGetJobApplicationById = useCallback(getJobApplicationById, []); 
+  const stableUpdateJobApplication = useCallback(updateJobApplication, []); 
+  const stableHrUpdateCandidateOverallStatus = useCallback(hrUpdateCandidateOverallStatus, []);
 
 
   useEffect(() => {
@@ -125,7 +146,7 @@ export default function CandidateQuestionnairePage() {
       setGeneratingQuestions(false);
       console.log("[QuestionnairePage] Finished question generation attempt for app:", applicationId);
     }
-  }, [applicationId, stableUpdateJobApplication, toast, generatingQuestions]); // Added missing dependencies
+  }, [applicationId, stableUpdateJobApplication, toast, generatingQuestions]); 
 
 
   useEffect(() => {
@@ -188,8 +209,7 @@ export default function CandidateQuestionnairePage() {
 
       let finalStatus: JobApplication['status'] = 'under_review_hr';
       let scoreData: Partial<JobApplication> = {};
-      let emailData: any = null;
-
+      
       try {
         console.log("[QuestionnairePage] ABOUT TO CALL scoreApplication...");
         const scoringResult = await scoreApplication({
@@ -210,21 +230,16 @@ export default function CandidateQuestionnairePage() {
               { email: candidateEmailForNotification, name: candidateNameForNotification }
             );
             console.log(`[QuestionnairePage] Automated Rejection for App ID ${applicationId} (Candidate: ${candidateEmailForNotification || 'N/A'}): Score ${scoringResult.score}.`);
-            if (candidateEmailForNotification && db && user) {
-                emailData = {
-                    to: [candidateEmailForNotification],
-                    message: {
-                        subject: `Update on Your Application for ${application.jobTitle} - JobFit AI`,
-                        html: `<p>Dear ${candidateNameForNotification || 'Candidate'},</p>
+            if (candidateEmailForNotification) {
+                const subject = `Update on Your Application for ${application.jobTitle} - JobFit AI`;
+                const htmlBody = `<p>Dear ${candidateNameForNotification || 'Candidate'},</p>
                                <p>Thank you for your interest in the ${application.jobTitle} position and for completing the questionnaire.</p>
                                <p>After an automated review of your application based on the job requirements and your questionnaire responses (Score: ${scoringResult.score}%), we have decided to pursue other candidates at this time whose qualifications more closely match the current needs for this role.</p>
                                <p>We appreciate the time and effort you invested in this process and wish you the best in your job search.</p>
-                               <p>Sincerely,<br/>The JobFit AI Team</p>`,
-                    },
-                    triggeredByUid: user.uid, // The candidate themselves are triggering this through submission
-                    applicationId: applicationId,
-                    createdAt: serverTimestamp(),
-                };
+                               <p>Sincerely,<br/>The JobFit AI Team</p>`;
+                const textBody = `Dear ${candidateNameForNotification || 'Candidate'},\n\nThank you for your interest in the ${application.jobTitle} position and for completing the questionnaire.\n\nAfter an automated review of your application based on the job requirements and your questionnaire responses (Score: ${scoringResult.score}%), we have decided to pursue other candidates at this time whose qualifications more closely match the current needs for this role.\n\nWe appreciate the time and effort you invested in this process and wish you the best in your job search.\n\nSincerely,\nThe JobFit AI Team`;
+                
+                await sendEmailViaApi(candidateEmailForNotification, subject, htmlBody, textBody);
             }
 
           } else {
@@ -235,7 +250,6 @@ export default function CandidateQuestionnairePage() {
               { email: candidateEmailForNotification, name: candidateNameForNotification }
             );
             console.log(`[QuestionnairePage] Application for App ID ${applicationId} (Candidate: ${candidateEmailForNotification || 'N/A'}) scored ${scoringResult.score}. Status set to under_review_hr.`);
-             // No email here; HR will review and then trigger emails.
           }
         } else {
             console.error("[QuestionnairePage] Invalid scoring result from AI:", scoringResult);
@@ -254,15 +268,6 @@ export default function CandidateQuestionnairePage() {
         ...scoreData,
       });
       console.log(`[QuestionnairePage] Final status for app ${applicationId} set to: ${finalStatus}`);
-
-      if (emailData && db) {
-        try {
-          await addDoc(collection(db, "mail"), emailData);
-          console.log(`[QuestionnairePage] Rejection email request added to 'mail' collection for ${candidateEmailForNotification}.`);
-        } catch (emailError) {
-          console.error(`[QuestionnairePage] Failed to add rejection email to mail collection for ${candidateEmailForNotification}:`, emailError);
-        }
-      }
 
       toast({ title: "Questionnaire Submitted!", description: "Thank you for completing the questionnaire." });
       router.push(`/candidate/feedback/${applicationId}`);
@@ -324,7 +329,7 @@ export default function CandidateQuestionnairePage() {
     return (
       <div className="max-w-3xl mx-auto space-y-6 text-center">
          <Button asChild variant="outline" className="mb-6 mr-auto block">
-            <Link href="/candidate/dashboard/jobs" className="flex items-center">
+            <Link href="/candidate/dashboard/jobs" className="flex items-center"> {/* Added flex and items-center */}
               <ArrowLeft className="mr-2 h-4 w-4" /> Back to Job Listings
             </Link>
         </Button>
@@ -354,7 +359,7 @@ export default function CandidateQuestionnairePage() {
   return (
     <div className="max-w-3xl mx-auto space-y-6">
       <Button asChild variant="outline">
-        <Link href="/candidate/dashboard/jobs" className="flex items-center">
+        <Link href="/candidate/dashboard/jobs" className="flex items-center"> {/* Added flex and items-center */}
           <ArrowLeft className="mr-2 h-4 w-4" /> Back to Job Listings
         </Link>
       </Button>
@@ -373,7 +378,7 @@ export default function CandidateQuestionnairePage() {
           {application.jobDescription && (
             <Accordion type="single" collapsible className="w-full">
               <AccordionItem value="job-description">
-                <AccordionTrigger className="text-md font-semibold text-primary hover:no-underline">
+                <AccordionTrigger className="text-md font-semibold text-primary hover:no-underline py-2">
                   <BookOpen className="mr-2 h-5 w-5" /> View Job Description
                 </AccordionTrigger>
                 <AccordionContent>

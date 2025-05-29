@@ -1,27 +1,48 @@
-
 // src/contexts/AuthContext.tsx
 "use client";
 
 import type { User as FirebaseUser, AuthError } from "firebase/auth";
 import { createContext, useContext, useEffect, useState, ReactNode } from "react";
-import { auth, db } from "@/lib/firebase"; // Import db
-import {
-  collection, // Import collection
-  addDoc,      // Import addDoc
-  serverTimestamp, // Import serverTimestamp
-} from "firebase/firestore";
+import { auth } from "@/lib/firebase"; 
+// import { db } from "@/lib/firebase"; // No longer directly needed for mail collection here
+// import {
+//   collection, 
+//   addDoc,      
+//   serverTimestamp, 
+// } from "firebase/firestore";
 import {
   onAuthStateChanged,
   signOut as firebaseSignOut,
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
-  sendPasswordResetEmail as firebaseSendPasswordResetEmail, // Keep original for direct Firebase call if needed
+  sendPasswordResetEmail as firebaseSendPasswordResetEmail,
   sendEmailVerification as firebaseSendEmailVerification,
   updateProfile as firebaseUpdateProfile,
 } from "firebase/auth";
-import type { EmailLoginFormValues, EmailSignUpFormValues } from "@/components/auth/LoginForm";
+import type { EmailLoginFormValues, EmailSignUpFormValues } from "@/components/auth/LoginForm"; // Assuming LoginForm also uses EmailSignUpFormValues for HR
 import type { CandidateSignUpFormValues } from "@/components/auth/CandidateSignUpForm";
 import type { CandidateLoginFormValues } from "@/components/auth/CandidateLoginForm";
+
+// Function to call our Next.js API route for sending emails
+const sendEmailViaApi = async (to: string, subject: string, html: string, text: string) => {
+  try {
+    const response = await fetch('/api/send-email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ to, subject, html, text }),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      console.error(`[sendEmailViaApi] Failed to send email to ${to}:`, result.error, result.details);
+      return false;
+    }
+    console.log(`[sendEmailViaApi] Email API call successful for ${to}.`);
+    return true;
+  } catch (error) {
+    console.error(`[sendEmailViaApi] Error calling email API for ${to}:`, error);
+    return false;
+  }
+};
 
 
 export interface UserProfileUpdate {
@@ -34,8 +55,8 @@ interface AuthContextType {
   auth: typeof auth | null;
   loading: boolean;
   error: AuthError | null;
-  signUp: (values: EmailSignUpFormValues) => Promise<FirebaseUser | null>;
-  signIn: (values: EmailLoginFormValues) => Promise<FirebaseUser | null>;
+  signUp: (values: EmailSignUpFormValues) => Promise<FirebaseUser | null>; // For HR
+  signIn: (values: EmailLoginFormValues) => Promise<FirebaseUser | null>; // For HR
   candidateSignUp: (values: CandidateSignUpFormValues) => Promise<FirebaseUser | null>;
   candidateSignIn: (values: CandidateLoginFormValues) => Promise<FirebaseUser | null>;
   signOut: () => Promise<void>;
@@ -69,44 +90,32 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       return false;
     }
     try {
-      // Firebase direct email verification (sends its own template)
       await firebaseSendEmailVerification(fbUser);
       console.log("AuthContext: Firebase verification email sent to", fbUser.email);
 
-      // Optionally, you can also trigger your custom email template via the 'mail' collection
-      // if you want more control over the template than Firebase's default.
-      // For now, we'll rely on Firebase's default email.
-      // If you wanted a custom one via MailerSend/Trigger Email extension:
-      /*
-      if (db) {
-        await addDoc(collection(db, "mail"), {
-          to: [fbUser.email],
-          message: {
-            subject: "Verify Your Email for JobFit AI",
-            html: `<p>Hello ${fbUser.displayName || 'User'},</p><p>Please click the link below to verify your email address for JobFit AI. If you didn't create an account, you can ignore this email.</p><p>Note: Firebase sends its own verification link. This is a placeholder for a custom template.</p><p>Thanks,<br/>The JobFit AI Team</p>`,
-          },
-          triggeredByUid: fbUser.uid,
-          createdAt: serverTimestamp(),
-        });
-        console.log(`AuthContext: Verification email request added to 'mail' collection for ${fbUser.email}`);
-      }
-      */
+      // We are relying on Firebase's default email, so no custom MailerSend call here.
+      // If you want to send an *additional* custom styled email:
+      // const subject = "Verify Your Email for JobFit AI";
+      // const htmlBody = `<p>Hello ${fbUser.displayName || 'User'},</p><p>Please click the link that was sent by Firebase to verify your email address for JobFit AI. If you didn't create an account, you can ignore this email.</p><p>Thanks,<br/>The JobFit AI Team</p>`;
+      // const textBody = `Hello ${fbUser.displayName || 'User'},\n\nPlease click the link that was sent by Firebase to verify your email address for JobFit AI. If you didn't create an account, you can ignore this email.\n\nThanks,\nThe JobFit AI Team`;
+      // await sendEmailViaApi(fbUser.email, subject, htmlBody, textBody);
+      
       return true;
     } catch (err) {
-      console.error("AuthContext: Error sending verification email:", err);
+      console.error("AuthContext: Error sending Firebase verification email:", err);
       setError(err as AuthError);
       return false;
     }
   };
 
-  const signUp = async (values: EmailSignUpFormValues): Promise<FirebaseUser | null> => {
+  const signUp = async (values: EmailSignUpFormValues): Promise<FirebaseUser | null> => { // HR Sign Up
     setLoading(true);
     setError(null);
     try {
       if (!auth) throw new Error("Firebase Auth not initialized.");
       const userCredential = await createUserWithEmailAndPassword(auth, values.email, values.password);
       if (userCredential.user) {
-        await sendVerificationEmail(userCredential.user);
+        await sendVerificationEmail(userCredential.user); // Send Firebase verification email
       }
       setUser(userCredential.user);
       return userCredential.user;
@@ -118,7 +127,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
-  const signIn = async (values: EmailLoginFormValues): Promise<FirebaseUser | null> => {
+  const signIn = async (values: EmailLoginFormValues): Promise<FirebaseUser | null> => { // HR Sign In
     setLoading(true);
     setError(null);
     try {
@@ -141,7 +150,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       if (!auth) throw new Error("Firebase Auth not initialized for candidate sign up.");
       const userCredential = await createUserWithEmailAndPassword(auth, values.email, values.password);
       if (userCredential.user) {
-        await sendVerificationEmail(userCredential.user);
+        await sendVerificationEmail(userCredential.user); // Send Firebase verification email
       }
       setUser(userCredential.user);
       return userCredential.user;
@@ -187,26 +196,20 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setLoading(true);
     setError(null);
     try {
-      if (!auth || !db) { // Also check for db
-        setError({ name:"AuthError", code: "auth/internal-error", message: "Firebase not fully initialized." } as AuthError);
+      if (!auth) {
+        setError({ name:"AuthError", code: "auth/internal-error", message: "Firebase Auth not initialized." } as AuthError);
         return false;
       }
-      // Firebase direct password reset (sends its own template)
       await firebaseSendPasswordResetEmail(auth, email);
       console.log("AuthContext: Firebase password reset email sent to", email);
+      
+      // We are relying on Firebase's default email, so no custom MailerSend call here.
+      // If you wanted to send an *additional* custom styled email:
+      // const subject = "Password Reset Request for JobFit AI";
+      // const htmlBody = `<p>Hello,</p><p>A password reset was requested for your JobFit AI account. Please follow the instructions in the email sent by Firebase to reset your password.</p><p>If you didn't request this, please ignore this email.</p><p>Thanks,<br/>The JobFit AI Team</p>`;
+      // const textBody = `Hello,\n\nA password reset was requested for your JobFit AI account. Please follow the instructions in the email sent by Firebase to reset your password.\n\nIf you didn't request this, please ignore this email.\n\nThanks,\nThe JobFit AI Team`;
+      // await sendEmailViaApi(email, subject, htmlBody, textBody);
 
-      // Optional: Add to 'mail' collection if you want a custom template via MailerSend
-      /*
-      await addDoc(collection(db, "mail"), {
-        to: [email],
-        message: {
-          subject: "Password Reset Request for JobFit AI",
-          html: `<p>Hello,</p><p>You requested a password reset for your JobFit AI account. Please follow the instructions sent by Firebase to reset your password.</p><p>If you didn't request this, please ignore this email.</p><p>Thanks,<br/>The JobFit AI Team</p>`,
-        },
-        createdAt: serverTimestamp(),
-      });
-      console.log(`AuthContext: Password reset request added to 'mail' collection for ${email}`);
-      */
       setLoading(false);
       return true;
     } catch (err) {
@@ -226,7 +229,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     try {
       await firebaseUpdateProfile(auth.currentUser, profileData);
       // Create a new user object with updated properties
-      const updatedUser = { ...auth.currentUser, ...profileData } as FirebaseUser;
+      const updatedUser = { ...auth.currentUser, ...profileData } as FirebaseUser; // currentUser is non-null here
       setUser(updatedUser);
       setLoading(false);
       return true;
