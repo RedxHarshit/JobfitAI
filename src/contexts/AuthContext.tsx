@@ -4,28 +4,24 @@
 
 import type { User as FirebaseUser, AuthError } from "firebase/auth";
 import { createContext, useContext, useEffect, useState, ReactNode } from "react";
-import { auth } from "@/lib/firebase";
+import { auth, db } from "@/lib/firebase"; // Import db
+import {
+  collection, // Import collection
+  addDoc,      // Import addDoc
+  serverTimestamp, // Import serverTimestamp
+} from "firebase/firestore";
 import {
   onAuthStateChanged,
   signOut as firebaseSignOut,
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
-  sendPasswordResetEmail,
+  sendPasswordResetEmail as firebaseSendPasswordResetEmail, // Keep original for direct Firebase call if needed
   sendEmailVerification as firebaseSendEmailVerification,
   updateProfile as firebaseUpdateProfile,
 } from "firebase/auth";
-import type { EmailLoginFormValues as BaseEmailLoginFormValues, EmailSignUpFormValues as BaseEmailSignUpFormValues } from "@/components/auth/LoginForm"; // For HR portal
-import type { CandidateSignUpFormValues as BaseCandidateSignUpFormValues } from "@/components/auth/CandidateSignUpForm"; // For Candidate portal
-import type { CandidateLoginFormValues as BaseCandidateLoginFormValues } from "@/components/auth/CandidateLoginForm"; // For Candidate portal
-
-
-// For HR Portal
-export type EmailLoginFormValues = BaseEmailLoginFormValues;
-export type EmailSignUpFormValues = BaseEmailSignUpFormValues;
-
-// For Candidate Portal
-export type CandidateSignUpFormValues = BaseCandidateSignUpFormValues;
-export type CandidateLoginFormValues = BaseCandidateLoginFormValues;
+import type { EmailLoginFormValues, EmailSignUpFormValues } from "@/components/auth/LoginForm";
+import type { CandidateSignUpFormValues } from "@/components/auth/CandidateSignUpForm";
+import type { CandidateLoginFormValues } from "@/components/auth/CandidateLoginForm";
 
 
 export interface UserProfileUpdate {
@@ -38,13 +34,10 @@ interface AuthContextType {
   auth: typeof auth | null;
   loading: boolean;
   error: AuthError | null;
-  // HR Portal Auth
   signUp: (values: EmailSignUpFormValues) => Promise<FirebaseUser | null>;
   signIn: (values: EmailLoginFormValues) => Promise<FirebaseUser | null>;
-  // Candidate Portal Auth
   candidateSignUp: (values: CandidateSignUpFormValues) => Promise<FirebaseUser | null>;
   candidateSignIn: (values: CandidateLoginFormValues) => Promise<FirebaseUser | null>;
-
   signOut: () => Promise<void>;
   sendPasswordReset: (email: string) => Promise<boolean>;
   sendVerificationEmail: (user: FirebaseUser) => Promise<boolean>;
@@ -70,14 +63,34 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   }, []);
 
   const sendVerificationEmail = async (fbUser: FirebaseUser): Promise<boolean> => {
-    if (!auth || !fbUser) {
-      console.error("AuthContext: User or auth not available for email verification.");
-      setError({ name: "AuthError", code: "auth/internal-error", message: "User or auth not available for email verification." } as AuthError)
+    if (!auth || !fbUser || !fbUser.email) {
+      console.error("AuthContext: User, email, or auth not available for email verification.");
+      setError({ name: "AuthError", code: "auth/internal-error", message: "User, email or auth not available for email verification." } as AuthError)
       return false;
     }
     try {
+      // Firebase direct email verification (sends its own template)
       await firebaseSendEmailVerification(fbUser);
-      console.log("AuthContext: Verification email sent to", fbUser.email);
+      console.log("AuthContext: Firebase verification email sent to", fbUser.email);
+
+      // Optionally, you can also trigger your custom email template via the 'mail' collection
+      // if you want more control over the template than Firebase's default.
+      // For now, we'll rely on Firebase's default email.
+      // If you wanted a custom one via MailerSend/Trigger Email extension:
+      /*
+      if (db) {
+        await addDoc(collection(db, "mail"), {
+          to: [fbUser.email],
+          message: {
+            subject: "Verify Your Email for JobFit AI",
+            html: `<p>Hello ${fbUser.displayName || 'User'},</p><p>Please click the link below to verify your email address for JobFit AI. If you didn't create an account, you can ignore this email.</p><p>Note: Firebase sends its own verification link. This is a placeholder for a custom template.</p><p>Thanks,<br/>The JobFit AI Team</p>`,
+          },
+          triggeredByUid: fbUser.uid,
+          createdAt: serverTimestamp(),
+        });
+        console.log(`AuthContext: Verification email request added to 'mail' collection for ${fbUser.email}`);
+      }
+      */
       return true;
     } catch (err) {
       console.error("AuthContext: Error sending verification email:", err);
@@ -86,7 +99,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
-  // For HR Portal
   const signUp = async (values: EmailSignUpFormValues): Promise<FirebaseUser | null> => {
     setLoading(true);
     setError(null);
@@ -94,7 +106,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       if (!auth) throw new Error("Firebase Auth not initialized.");
       const userCredential = await createUserWithEmailAndPassword(auth, values.email, values.password);
       if (userCredential.user) {
-        // Optionally send verification for HR users too, or handle differently
         await sendVerificationEmail(userCredential.user);
       }
       setUser(userCredential.user);
@@ -123,7 +134,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
-  // For Candidate Portal
   const candidateSignUp = async (values: CandidateSignUpFormValues): Promise<FirebaseUser | null> => {
     setLoading(true);
     setError(null);
@@ -132,10 +142,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       const userCredential = await createUserWithEmailAndPassword(auth, values.email, values.password);
       if (userCredential.user) {
         await sendVerificationEmail(userCredential.user);
-        // Optionally, set a display name if provided (e.g., from a 'name' field if you add it to CandidateSignUpFormValues)
-        // await firebaseUpdateProfile(userCredential.user, { displayName: values.name });
       }
-      setUser(userCredential.user); // Set user state, they are technically "logged in" but dashboard should check emailVerified
+      setUser(userCredential.user);
       return userCredential.user;
     } catch (err) {
       setError(err as AuthError);
@@ -161,7 +169,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
-
   const signOut = async () => {
     setLoading(true);
     setError(null);
@@ -180,8 +187,26 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setLoading(true);
     setError(null);
     try {
-      if (!auth) throw new Error("Firebase Auth not initialized.");
-      await sendPasswordResetEmail(auth, email);
+      if (!auth || !db) { // Also check for db
+        setError({ name:"AuthError", code: "auth/internal-error", message: "Firebase not fully initialized." } as AuthError);
+        return false;
+      }
+      // Firebase direct password reset (sends its own template)
+      await firebaseSendPasswordResetEmail(auth, email);
+      console.log("AuthContext: Firebase password reset email sent to", email);
+
+      // Optional: Add to 'mail' collection if you want a custom template via MailerSend
+      /*
+      await addDoc(collection(db, "mail"), {
+        to: [email],
+        message: {
+          subject: "Password Reset Request for JobFit AI",
+          html: `<p>Hello,</p><p>You requested a password reset for your JobFit AI account. Please follow the instructions sent by Firebase to reset your password.</p><p>If you didn't request this, please ignore this email.</p><p>Thanks,<br/>The JobFit AI Team</p>`,
+        },
+        createdAt: serverTimestamp(),
+      });
+      console.log(`AuthContext: Password reset request added to 'mail' collection for ${email}`);
+      */
       setLoading(false);
       return true;
     } catch (err) {
@@ -200,7 +225,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setError(null);
     try {
       await firebaseUpdateProfile(auth.currentUser, profileData);
-      setUser(prevUser => prevUser ? { ...prevUser, ...profileData } as FirebaseUser : null);
+      // Create a new user object with updated properties
+      const updatedUser = { ...auth.currentUser, ...profileData } as FirebaseUser;
+      setUser(updatedUser);
       setLoading(false);
       return true;
     } catch (err) {
@@ -216,8 +243,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       auth,
       loading,
       error,
-      signUp, // For HR
-      signIn, // For HR
+      signUp,
+      signIn,
       candidateSignUp,
       candidateSignIn,
       signOut,
