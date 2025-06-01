@@ -1,3 +1,4 @@
+
 // src/contexts/AppContext.tsx
 "use client";
 
@@ -19,7 +20,7 @@ import {
   orderBy,
   DocumentData,
   limit,
-  // serverTimestamp, // No longer needed as we're calling API route for mail
+  deleteField,
 } from "firebase/firestore";
 import { useAuth } from "./AuthContext";
 import { format } from "date-fns";
@@ -52,6 +53,7 @@ const convertTimestampsToDates = (data: DocumentData): any => {
 // Function to call our Next.js API route for sending emails
 const sendEmailViaApi = async (to: string, subject: string, html: string, text: string) => {
   try {
+    console.log(`[sendEmailViaApi] Attempting to call /api/send-email for ${to} with subject: ${subject}`);
     const response = await fetch('/api/send-email', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -59,13 +61,20 @@ const sendEmailViaApi = async (to: string, subject: string, html: string, text: 
     });
     const result = await response.json();
     if (!response.ok) {
-      console.error(`[sendEmailViaApi] Failed to send email to ${to}:`, result.error, result.details);
+      console.error(`[sendEmailViaApi] Failed to send email to ${to}:`, result.error, result.details, result.mailerSendBody);
+      // Log MailerSend specific error body if available
+      if (result.mailerSendBody) {
+        console.error(`[sendEmailViaApi] MailerSend Error Body for ${to}:`, result.mailerSendBody);
+      }
       return false;
     }
-    console.log(`[sendEmailViaApi] Email API call successful for ${to}.`);
+    console.log(`[sendEmailViaApi] Email API call successful for ${to}. Raw API Result from /api/send-email:`, result);
+    if (result.mailerSendResponse) {
+        console.log(`[sendEmailViaApi] MailerSend SDK Response (from API):`, result.mailerSendResponse);
+    }
     return true;
-  } catch (error) {
-    console.error(`[sendEmailViaApi] Error calling email API for ${to}:`, error);
+  } catch (error: any) {
+    console.error(`[sendEmailViaApi] Error calling email API for ${to}:`, error.message, error);
     return false;
   }
 };
@@ -76,8 +85,8 @@ interface AppContextType {
   jobs: Job[];
   userCandidateProfile: Candidate | null;
   allJobApplications: JobApplication[];
-  addCandidate: (candidateData: Omit<Candidate, "id" | "userId" | "profileLastUpdatedAt" | "overallStatus" | "overallStatusLastUpdatedAt">) => Promise<Candidate | null>;
-  saveCandidateDataForUser: (userId: string, candidateData: Omit<Candidate, "id" | "userId" | "profileLastUpdatedAt" | "overallStatus" | "overallStatusLastUpdatedAt"> & { userId: string }) => Promise<Candidate | null>;
+  addCandidate: (candidateData: Omit<Candidate, "id" | "userId" | "profileLastUpdatedAt" | "overallStatus" | "overallStatusLastUpdatedAt" | "matchData" | "interviewQuestions"> & {phone?: string | null; email?: string | null}) => Promise<Candidate | null>;
+  saveCandidateDataForUser: (userId: string, candidateData: Omit<Candidate, "id"  | "profileLastUpdatedAt" | "overallStatus" | "overallStatusLastUpdatedAt"> & { userId: string }) => Promise<Candidate | null>;
   addJob: (jobData: Omit<Job, "id" | "userId" | "createdAt">) => Promise<Job | null>;
   deleteJob: (jobId: string) => Promise<boolean>;
   updateCandidate: (candidate: Candidate) => Promise<void>;
@@ -118,7 +127,6 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
             const profileData = convertTimestampsToDates({
                 id: candidateProfileSnap.id,
                 ...candidateProfileSnap.data(),
-                // userId: currentAuthUserUid // userId should already be in data if saved correctly
             }) as Candidate;
             setUserCandidateProfile(profileData);
             console.log("[AppContext] Fetched specific candidate profile:", profileData);
@@ -163,12 +171,14 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         await fetchCandidateProfile(currentAuthUser.uid);
 
         // Fetch applications specific to the logged-in candidate (for candidate portal)
+        // Also fetch all applications if user is HR (or could be both)
+        // For simplicity here, if user is logged in, we fetch their apps. HR would typically see apps via Candidate or Job views.
         const candidateAppsQuery = query(collection(db, "jobApplications"), where("candidateId", "==", currentAuthUser.uid), orderBy("appliedAt", "desc"));
         const candidateAppsSnapshot = await getDocs(candidateAppsQuery);
         const fetchedCandidateApps: JobApplication[] = candidateAppsSnapshot.docs.map(docSnapshot =>
             convertTimestampsToDates({ id: docSnapshot.id, ...docSnapshot.data() }) as JobApplication
         );
-        setAllJobApplications(fetchedCandidateApps);
+        setAllJobApplications(fetchedCandidateApps); // This will store apps for the current user if they are a candidate
         console.log(`[AppContext] Fetched ${fetchedCandidateApps.length} job applications for candidate user ${currentAuthUser.uid}`);
 
       } else {
@@ -188,7 +198,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     fetchData(user);
   }, [user, fetchData]);
 
-  const addCandidate = useCallback(async (candidateData: Omit<Candidate, "id" | "userId" | "profileLastUpdatedAt" | "overallStatus" | "overallStatusLastUpdatedAt">): Promise<Candidate | null> => {
+  const addCandidate = useCallback(async (candidateData: Omit<Candidate, "id" | "userId" | "profileLastUpdatedAt" | "overallStatus" | "overallStatusLastUpdatedAt" | "matchData" | "interviewQuestions"> & {phone?: string | null; email?: string | null}): Promise<Candidate | null> => {
     if (!user || !db) return null;
     try {
       const now = new Date();
@@ -196,6 +206,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         ...candidateData,
         userId: user.uid, // HR user ID as the creator
         profileLastUpdatedAt: now,
+        matchData: candidateData.matchData || null,
         interviewQuestions: candidateData.interviewQuestions || [],
         parsedText: candidateData.parsedText || "",
         overallStatus: 'new',
@@ -211,7 +222,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     }
   }, [user]);
 
-  const saveCandidateDataForUser = useCallback(async (candidateAuthUid: string, candidateProfileData: Omit<Candidate, "id" | "userId" | "profileLastUpdatedAt" | "overallStatus" | "overallStatusLastUpdatedAt"> & { userId: string }): Promise<Candidate | null> => {
+  const saveCandidateDataForUser = useCallback(async (candidateAuthUid: string, candidateProfileData: Omit<Candidate, "id" | "profileLastUpdatedAt" | "overallStatus" | "overallStatusLastUpdatedAt"> & { userId: string }): Promise<Candidate | null> => {
     if (!db) return null;
     if (candidateAuthUid !== candidateProfileData.userId) {
       console.error("[AppContext] Mismatch between provided candidateAuthUid and userId in data for saveCandidateDataForUser.");
@@ -223,22 +234,38 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       const existingData = existingDocSnap.exists() ? convertTimestampsToDates(existingDocSnap.data()) as Partial<Candidate> : {} as Partial<Candidate>;
       const now = new Date();
 
-      const dataToSave: Candidate = {
-        id: candidateAuthUid, // ensure ID is part of the object to be set
-        ...candidateProfileData,
+      const dataForFirestore: DocumentData = {
+        candidateName: candidateProfileData.candidateName || "N/A",
+        email: candidateProfileData.email, // Assumes candidateProfileData.email could be null from ResumeUploadForm
+        phone: candidateProfileData.phone, // Assumes candidateProfileData.phone could be null
+        skills: candidateProfileData.skills || [],
+        experience: candidateProfileData.experience || [],
+        education: candidateProfileData.education || [],
+        resumeFileName: candidateProfileData.resumeFileName,
+        parsedText: candidateProfileData.parsedText || '',
         userId: candidateAuthUid,
         profileLastUpdatedAt: now,
-        parsedText: candidateProfileData.parsedText || "",
         overallStatus: existingData.overallStatus || 'new',
         overallStatusLastUpdatedAt: existingData.overallStatusLastUpdatedAt ? new Date(existingData.overallStatusLastUpdatedAt.toString()) : now,
-        matchData: candidateProfileData.matchData || existingData.matchData || undefined,
-        interviewQuestions: candidateProfileData.interviewQuestions || existingData.interviewQuestions || [],
+        // When uploading a new resume, old matchData and interviewQuestions might be invalidated.
+        // For simplicity, let's clear them if not explicitly provided in candidateProfileData.
+        // If candidateProfileData *could* include these (e.g. from a different update path), this logic would need adjustment.
+        // From ResumeUploadForm, candidateProfileData.matchData and candidateProfileData.interviewQuestions are undefined.
+        matchData: candidateProfileData.matchData !== undefined ? candidateProfileData.matchData : (existingData.matchData || null),
+        interviewQuestions: candidateProfileData.interviewQuestions !== undefined ? candidateProfileData.interviewQuestions : (existingData.interviewQuestions || []),
       };
-      await setDoc(candidateDocRef, dataToSave, { merge: true });
-      const finalCandidateData = convertTimestampsToDates(dataToSave) as Candidate;
+      
+      // Ensure no undefined values are sent to Firestore for top-level optional fields
+      if (dataForFirestore.email === undefined) dataForFirestore.email = null;
+      if (dataForFirestore.phone === undefined) dataForFirestore.phone = null;
+      if (dataForFirestore.matchData === undefined) dataForFirestore.matchData = null; // Explicitly set to null
 
-      setUserCandidateProfile(finalCandidateData); // Update specific profile for candidate view
-      // Update the general list of candidates as well
+
+      await setDoc(candidateDocRef, dataForFirestore, { merge: true });
+      
+      const finalCandidateData = convertTimestampsToDates({ ...dataForFirestore, id: candidateAuthUid }) as Candidate;
+
+      setUserCandidateProfile(finalCandidateData); 
       setCandidates(prev => {
         const index = prev.findIndex(c => c.id === candidateAuthUid);
         if (index > -1) {
@@ -246,7 +273,6 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
           updatedList[index] = finalCandidateData;
           return updatedList.sort((a, b) => (new Date(b.profileLastUpdatedAt || 0).getTime()) - (new Date(a.profileLastUpdatedAt || 0).getTime()));
         }
-        // If candidate wasn't in the list (e.g. new self-registration seen by HR), add them
         return [finalCandidateData, ...prev].sort((a, b) => (new Date(b.profileLastUpdatedAt || 0).getTime()) - (new Date(a.profileLastUpdatedAt || 0).getTime()));
       });
       return finalCandidateData;
@@ -291,14 +317,37 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     if (!db) return;
     try {
       const candidateRef = doc(db, "candidates", updatedCandidate.id);
-      const dataToUpdate = { ...updatedCandidate };
-      if ('id' in dataToUpdate) delete (dataToUpdate as any).id; // Firestore handles ID from doc ref
+      const { id, ...dataForUpdate } = updatedCandidate;
 
-      dataToUpdate.profileLastUpdatedAt = new Date(dataToUpdate.profileLastUpdatedAt || Date.now());
-      dataToUpdate.overallStatusLastUpdatedAt = new Date(dataToUpdate.overallStatusLastUpdatedAt || Date.now());
+      const sanitizedData: DocumentData = {};
+      for (const key in dataForUpdate) {
+          if (Object.prototype.hasOwnProperty.call(dataForUpdate, key)) {
+              const value = dataForUpdate[key as keyof typeof dataForUpdate];
+              if (value !== undefined) {
+                  sanitizedData[key] = value;
+              } else {
+                  // For known optional fields, if undefined in the input, set to null in Firestore
+                  // or use deleteField() if you want to remove the field entirely.
+                  // For this generic update, setting to null is safer if the field might be expected.
+                  if (key === "matchData" || key === "phone" || key === "resumeFileName" || key === "parsedText" || key === "interviewQuestions" || key === "email") {
+                      sanitizedData[key] = null;
+                  }
+                  // Otherwise, undefined fields are just skipped, not added to sanitizedData
+              }
+          }
+      }
+      
+      // Ensure date fields are JS Dates or Timestamps for Firestore
+      if (sanitizedData.profileLastUpdatedAt && !(sanitizedData.profileLastUpdatedAt instanceof Timestamp)) {
+        sanitizedData.profileLastUpdatedAt = new Date(sanitizedData.profileLastUpdatedAt.toString());
+      }
+      if (sanitizedData.overallStatusLastUpdatedAt && !(sanitizedData.overallStatusLastUpdatedAt instanceof Timestamp)) {
+         sanitizedData.overallStatusLastUpdatedAt = new Date(sanitizedData.overallStatusLastUpdatedAt.toString());
+      }
 
-      await updateDoc(candidateRef, dataToUpdate as DocumentData);
-      const finalUpdatedCandidate = convertTimestampsToDates({ ...updatedCandidate }) as Candidate;
+
+      await updateDoc(candidateRef, sanitizedData);
+      const finalUpdatedCandidate = convertTimestampsToDates({ ...sanitizedData, id: updatedCandidate.id }) as Candidate;
 
       setCandidates((prev) =>
         prev.map(c => c.id === updatedCandidate.id ? finalUpdatedCandidate : c)
@@ -409,29 +458,52 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     if (!db || !applicationId) return false;
     try {
       const appRef = doc(db, "jobApplications", applicationId);
-      let dataToUpdate = { ...data };
+      let dataToUpdate: DocumentData = { ...data };
 
       const dateFields: (keyof JobApplication)[] = ['appliedAt', 'questionnaireGeneratedAt', 'questionnaireCompletedAt', 'reviewedByHrAt'];
       dateFields.forEach(field => {
-        const value = dataToUpdate[field];
+        const value = dataToUpdate[field as string];
         if (value && value instanceof Date) {
-          (dataToUpdate as any)[field] = value; // Keep as Date, Firestore will convert
-        } else if (value && !(value instanceof Date) && typeof value !== 'string') { // Handle Timestamps from Firestore
+          dataToUpdate[field as string] = value; 
+        } else if (value && typeof value === 'object' && value.seconds !== undefined && value.nanoseconds !== undefined ) { // Handle Timestamps from Firestore
           try {
-            (dataToUpdate as any)[field] = new Date((value as any).seconds * 1000 + (value as any).nanoseconds / 1000000);
+            dataToUpdate[field as string] = new Date((value as any).seconds * 1000 + (value as any).nanoseconds / 1000000);
           } catch (e) {
             console.warn(`Could not convert ${String(field)} to Date:`, value);
           }
         }
       });
       
-      if (dataToUpdate.interviewDetails && dataToUpdate.interviewDetails.date && typeof dataToUpdate.interviewDetails.date !== 'string') {
-         dataToUpdate.interviewDetails.date = format(new Date(dataToUpdate.interviewDetails.date.toString()), "PPP");
+      if (dataToUpdate.interviewDetails && dataToUpdate.interviewDetails.date && typeof dataToUpdate.interviewDetails.date !== 'string' && !(dataToUpdate.interviewDetails.date instanceof Date)) {
+        // Assuming it might be a Firestore Timestamp-like object or needs conversion
+         try {
+            dataToUpdate.interviewDetails.date = format(new Date(dataToUpdate.interviewDetails.date.toString()), "PPP");
+         } catch (e) {
+            console.warn('Could not format interviewDetails.date', dataToUpdate.interviewDetails.date);
+         }
+      } else if (dataToUpdate.interviewDetails && dataToUpdate.interviewDetails.date instanceof Date) {
+         dataToUpdate.interviewDetails.date = format(dataToUpdate.interviewDetails.date, "PPP");
       }
 
+      // Sanitize for undefined values before sending to Firestore
+      const sanitizedDataToUpdate: DocumentData = {};
+      for (const key in dataToUpdate) {
+        if (Object.prototype.hasOwnProperty.call(dataToUpdate, key)) {
+          if (dataToUpdate[key] !== undefined) {
+            sanitizedDataToUpdate[key] = dataToUpdate[key];
+          } else {
+            // Optionally set to null or use deleteField() if removing
+            // For update, often it's better to just omit undefined fields
+            // but if a field was explicitly set to undefined to clear it, it needs specific handling
+             if (key === "score" || key === "scoreJustification" || key === "feedbackToCandidate" || key === "rejectionReason" || key === "interviewDetails") {
+                sanitizedDataToUpdate[key] = null; // Or deleteField()
+            }
+          }
+        }
+      }
 
-      await updateDoc(appRef, dataToUpdate as DocumentData);
-      setAllJobApplications(prev => prev.map(app => app.id === applicationId ? convertTimestampsToDates({ ...app, ...data, id: applicationId }) as JobApplication : app)
+      await updateDoc(appRef, sanitizedDataToUpdate);
+      setAllJobApplications(prev => prev.map(app => app.id === applicationId ? convertTimestampsToDates({ ...app, ...sanitizedDataToUpdate, id: applicationId }) as JobApplication : app)
         .sort((a, b) => new Date(b.appliedAt).getTime() - new Date(a.appliedAt).getTime()));
       return true;
     } catch (error) {
@@ -550,7 +622,12 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         reviewedByHrAt: new Date(),
       };
       if (newStatus === 'interview_scheduled' && interviewDetails) {
-        updateData.interviewDetails = interviewDetails;
+        // Ensure interviewDetails.date is a string if it's a Date object before saving
+        const detailsToSave = { ...interviewDetails };
+        if (detailsToSave.date && detailsToSave.date instanceof Date) {
+            detailsToSave.date = format(detailsToSave.date, "PPP");
+        }
+        updateData.interviewDetails = detailsToSave;
       }
 
       await updateDoc(appRef, updateData as DocumentData);
@@ -571,10 +648,10 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       let mailBody = "";
       let plainTextBody = "";
 
-      if (newStatus === 'interview_scheduled' && interviewDetails) {
+      if (newStatus === 'interview_scheduled' && updateData.interviewDetails) {
            mailSubject = `Interview Scheduled: ${jobTitle} at JobFit AI`;
-           mailBody = `<p>Dear ${candidateName},</p><p>We're pleased to invite you for an interview for the ${jobTitle} position!</p><p><b>Interview Details:</b><br/>Date: ${interviewDetails.date}<br/>Time: ${interviewDetails.time}${interviewDetails.notes ? `<br/>Notes: ${interviewDetails.notes}` : ''}</p><p>Our recruitment team will be in touch if any further instructions are needed. Please confirm your availability.</p><p>Best regards,<br/>The JobFit AI Team</p>`;
-           plainTextBody = `Dear ${candidateName},\n\nWe're pleased to invite you for an interview for the ${jobTitle} position!\n\nInterview Details:\nDate: ${interviewDetails.date}\nTime: ${interviewDetails.time}\n${interviewDetails.notes ? `Notes: ${interviewDetails.notes}\n` : ''}\nOur recruitment team will be in touch if any further instructions are needed. Please confirm your availability.\n\nBest regards,\nThe JobFit AI Team`;
+           mailBody = `<p>Dear ${candidateName},</p><p>We're pleased to invite you for an interview for the ${jobTitle} position!</p><p><b>Interview Details:</b><br/>Date: ${updateData.interviewDetails.date}<br/>Time: ${updateData.interviewDetails.time}${updateData.interviewDetails.notes ? `<br/>Notes: ${updateData.interviewDetails.notes}` : ''}</p><p>Our recruitment team will be in touch if any further instructions are needed. Please confirm your availability.</p><p>Best regards,<br/>The JobFit AI Team</p>`;
+           plainTextBody = `Dear ${candidateName},\n\nWe're pleased to invite you for an interview for the ${jobTitle} position!\n\nInterview Details:\nDate: ${updateData.interviewDetails.date}\nTime: ${updateData.interviewDetails.time}\n${updateData.interviewDetails.notes ? `Notes: ${updateData.interviewDetails.notes}\n` : ''}\nOur recruitment team will be in touch if any further instructions are needed. Please confirm your availability.\n\nBest regards,\nThe JobFit AI Team`;
       } else if (newStatus === 'accepted') {
           mailSubject = `Your Application for ${jobTitle} at JobFit AI has Progressed!`;
           mailBody = `<p>Dear ${candidateName},</p><p>We are thrilled to inform you that your application for the ${jobTitle} position has been accepted and is moving to the next stage!</p><p>Our recruitment team will be in touch shortly with more details.</p><p>Congratulations!</p><p>Best regards,<br/>The JobFit AI Team</p>`;

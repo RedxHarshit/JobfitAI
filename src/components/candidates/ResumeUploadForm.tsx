@@ -108,18 +108,19 @@ export function ResumeUploadForm({
         }
         const candidateProfileData = {
           candidateName: parsedData.candidateName || candidateAuthDisplayName || "N/A",
-          email: parsedData.email || candidateAuthEmail,
-          phone: parsedData.phone,
+          email: parsedData.email || candidateAuthEmail || null, // Ensure email is null if not available
+          phone: parsedData.phone || null, // Ensure phone is null if undefined
           skills: parsedData.skills || [],
           experience: parsedData.experience || [],
           education: parsedData.education || [],
           resumeFileName: file.name,
           parsedText: parsedData.parsedText || '',
-          profileLastUpdatedAt: new Date(),
+          // profileLastUpdatedAt is set in saveCandidateDataForUser
           userId: candidateUserId,
+          // matchData and interviewQuestions are not set here; they will be handled by saveCandidateDataForUser
         };
 
-        const updatedCandidate = await saveCandidateDataForUser(candidateUserId, candidateProfileData);
+        const updatedCandidate = await saveCandidateDataForUser(candidateUserId, candidateProfileData as Omit<Candidate, "id" | "profileLastUpdatedAt" | "overallStatus" | "overallStatusLastUpdatedAt"> & { userId: string });
         if (updatedCandidate) {
           toast({
             title: "Resume Updated Successfully!",
@@ -131,10 +132,15 @@ export function ResumeUploadForm({
         }
 
       } else { // HR Mode
-        const candidateToCreate: Omit<Candidate, "id" | "userId"> = {
+        const candidateToCreate: Omit<Candidate, "id" | "userId" | "profileLastUpdatedAt" | "overallStatus" | "overallStatusLastUpdatedAt" | "matchData" | "interviewQuestions"> & {phone?: string | null; email?: string | null} = {
           resumeFileName: file.name,
           parsedText: parsedData.parsedText || '',
-          ...parsedData,
+          candidateName: parsedData.candidateName || "Unnamed Candidate",
+          email: parsedData.email || null,
+          phone: parsedData.phone || null,
+          skills: parsedData.skills || [],
+          experience: parsedData.experience || [],
+          education: parsedData.education || [],
         };
 
         const newCandidate = await addCandidate(candidateToCreate);
