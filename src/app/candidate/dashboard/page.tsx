@@ -13,29 +13,47 @@ import Link from 'next/link';
 import { FileText, Briefcase, UserCircle } from 'lucide-react';
 
 export default function CandidateDashboardPage() {
-  const { user, loading: authLoading, signOut } = useAuth();
-  const { userCandidateProfile, loadingData: appLoading } = useAppContext();
+  const { user, loading: authLoading } = useAuth();
+  const { userCandidateProfile, loadingData: appLoading, fetchCandidateProfile } = useAppContext(); // Added fetchCandidateProfile
   const router = useRouter();
 
   useEffect(() => {
     if (!authLoading && !user) {
       router.replace('/candidate/login');
+      return;
     }
     if (!authLoading && user && !user.emailVerified) {
         router.replace('/candidate/login?reason=unverified');
+        return;
     }
-  }, [user, authLoading, router]);
 
-  const loading = authLoading || appLoading;
+    // If user is authenticated and verified, ensure their profile is fetched
+    if (!authLoading && user && user.emailVerified && !userCandidateProfile && !appLoading) {
+      fetchCandidateProfile(user.uid); // Attempt to fetch if not already loading and profile missing
+    }
+    
+    // Redirect logic after auth and app data loading state is resolved
+    if (!authLoading && user && user.emailVerified && !appLoading) {
+      if (!userCandidateProfile || !userCandidateProfile.resumeFileName) {
+        router.replace('/candidate/dashboard/resume-upload');
+      }
+    }
+  }, [user, authLoading, appLoading, userCandidateProfile, router, fetchCandidateProfile]);
 
-  if (loading || !user || (user && !user.emailVerified)) {
+  const isRedirectingToUpload = !appLoading && user && user.emailVerified && (!userCandidateProfile || !userCandidateProfile.resumeFileName);
+  const showLoader = authLoading || appLoading || !user || (user && !user.emailVerified) || isRedirectingToUpload;
+
+  if (showLoader) {
     return (
-      <div className="flex items-center justify-center min-h-[calc(100vh-200px)]">
+      <div className="flex flex-col items-center justify-center min-h-[calc(100vh-200px)]">
         <Loader size={48} />
+        {isRedirectingToUpload && <p className="mt-4 text-muted-foreground">Please upload your resume to continue...</p>}
+        {(authLoading || appLoading) && !isRedirectingToUpload && <p className="mt-4 text-muted-foreground">Loading dashboard...</p>}
       </div>
     );
   }
 
+  // If we reach here, user is authenticated, verified, app data loaded, and resume exists.
   return (
     <div className="space-y-6">
       <Card className="shadow-lg">
@@ -47,7 +65,7 @@ export default function CandidateDashboardPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <p className="mb-6">Your journey with TalentFlow AI starts here. Prepare your resume and find the perfect job.</p>
-          
+
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <Card className="hover:shadow-md transition-shadow">
               <CardHeader>
@@ -63,7 +81,7 @@ export default function CandidateDashboardPage() {
                 </Button>
               </CardContent>
             </Card>
-            
+
             <Card className="hover:shadow-md transition-shadow">
               <CardHeader>
                 <div className="flex items-center gap-3">

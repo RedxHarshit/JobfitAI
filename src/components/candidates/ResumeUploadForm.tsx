@@ -2,7 +2,7 @@
 // src/components/candidates/ResumeUploadForm.tsx
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, type DragEvent } from "react";
 import { useForm, type SubmitHandler } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
@@ -45,8 +45,8 @@ interface ResumeUploadFormProps {
   candidateAuthEmail?: string;
 }
 
-export function ResumeUploadForm({ 
-  isCandidateMode = false, 
+export function ResumeUploadForm({
+  isCandidateMode = false,
   candidateUserId,
   candidateAuthDisplayName,
   candidateAuthEmail
@@ -58,8 +58,9 @@ export function ResumeUploadForm({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
 
-  const { register, handleSubmit, formState: { errors }, watch, reset } = useForm<ResumeUploadFormValues>({
+  const { register, handleSubmit, formState: { errors }, watch, reset, setValue } = useForm<ResumeUploadFormValues>({
     resolver: zodResolver(resumeUploadSchema),
   });
 
@@ -100,7 +101,7 @@ export function ResumeUploadForm({
     try {
       const dataUri = await fileToDataUri(file);
       const parsedData: ParseResumeOutput = await parseResume({ resumeDataUri: dataUri });
-      
+
       if (isCandidateMode && candidateUserId) { // Candidate mode
         if(candidateUserId !== currentUserIdForAction) {
           throw new Error("User ID mismatch in candidate mode.");
@@ -113,7 +114,7 @@ export function ResumeUploadForm({
           experience: parsedData.experience || [],
           education: parsedData.education || [],
           resumeFileName: file.name,
-          parsedText: parsedData.parsedText || '', 
+          parsedText: parsedData.parsedText || '',
           profileLastUpdatedAt: new Date(),
           userId: candidateUserId,
         };
@@ -124,7 +125,7 @@ export function ResumeUploadForm({
             title: "Resume Updated Successfully!",
             description: `Your profile has been updated with the new resume.`,
           });
-          router.push(`/candidate/dashboard`); 
+          router.push(`/candidate/dashboard`);
         } else {
           throw new Error("Failed to update your candidate profile.");
         }
@@ -132,11 +133,10 @@ export function ResumeUploadForm({
       } else { // HR Mode
         const candidateToCreate: Omit<Candidate, "id" | "userId"> = {
           resumeFileName: file.name,
-          parsedText: parsedData.parsedText || '', 
+          parsedText: parsedData.parsedText || '',
           ...parsedData,
-          // userId will be hrUser.uid, set by addCandidate
         };
-        
+
         const newCandidate = await addCandidate(candidateToCreate);
         if (newCandidate) {
           toast({
@@ -148,7 +148,7 @@ export function ResumeUploadForm({
           throw new Error("Failed to save candidate after parsing.");
         }
       }
-      reset(); 
+      reset();
       setFileName(null);
     } catch (err: any) {
       console.error("Detailed error in ResumeUploadForm onSubmit:", err);
@@ -164,8 +164,45 @@ export function ResumeUploadForm({
     }
   };
 
+  const handleDragEnter = (e: DragEvent<HTMLLabelElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(true);
+  };
+
+  const handleDragLeave = (e: DragEvent<HTMLLabelElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+  };
+
+  const handleDragOver = (e: DragEvent<HTMLLabelElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!isDragOver) setIsDragOver(true); // Ensure isDragOver is true
+  };
+
+  const handleDrop = (e: DragEvent<HTMLLabelElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+    const files = e.dataTransfer.files;
+    if (files && files.length > 0) {
+      setValue("resume", files, { shouldValidate: true });
+      // The watchedFiles useEffect will update fileName
+    } else {
+      // Handle case where no files are dropped or dataTransfer is empty
+      toast({
+          title: "No File Dropped",
+          description: "Please ensure you drag and drop a valid file.",
+          variant: "destructive"
+      });
+    }
+  };
+
+
   const title = isCandidateMode ? "Upload/Update Your Resume" : "Upload Candidate Resume";
-  const description = isCandidateMode 
+  const description = isCandidateMode
     ? "Upload your latest resume. Our AI will parse it to keep your profile up-to-date for job matching."
     : "Let AI extract key information and kickstart your evaluation process. Supports PDF, DOCX, and TXT files (max 5MB).";
   const buttonIcon = isCandidateMode ? <UserSquare2 className="mr-2 h-5 w-5" /> : <Sparkles className="mr-2 h-5 w-5" />;
@@ -190,35 +227,42 @@ export function ResumeUploadForm({
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
           <div className="space-y-2">
             <Label htmlFor="resume-upload-input" className="text-base">Resume File</Label>
-            <div className="flex items-center justify-center w-full">
-                <label 
-                    htmlFor="resume-upload-input" 
-                    className={cn(
-                        "flex flex-col items-center justify-center w-full h-48 border-2 border-dashed rounded-lg cursor-pointer",
-                        "bg-muted/50 hover:bg-muted/75 border-border hover:border-primary",
-                        errors.resume && "border-destructive hover:border-destructive"
+            <label
+                htmlFor="resume-upload-input"
+                className={cn(
+                    "flex flex-col items-center justify-center w-full h-64 border-2 border-dashed rounded-lg cursor-pointer transition-colors duration-200 ease-in-out",
+                    "bg-muted/30 hover:bg-muted/50",
+                    isDragOver ? "border-primary bg-primary/10" : "border-border hover:border-primary",
+                    errors.resume && !isDragOver && "border-destructive hover:border-destructive",
+                    errors.resume && isDragOver && "border-destructive bg-destructive/10"
+                )}
+                onDragEnter={handleDragEnter}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+            >
+                <div className="flex flex-col items-center justify-center pt-5 pb-6 text-center">
+                    <UploadCloud className={cn("w-12 h-12 mb-4", errors.resume ? "text-destructive" : "text-primary", isDragOver && "text-primary")} />
+                    {fileName ? (
+                      <>
+                        <p className="mb-2 text-sm text-foreground font-semibold">{fileName}</p>
+                        <p className="text-xs text-muted-foreground">Drag & drop or click to change file</p>
+                      </>
+                    ) : (
+                      <>
+                        <p className="mb-2 text-sm text-foreground"><span className="font-semibold">Click to upload</span> or drag and drop</p>
+                        <p className="text-xs text-muted-foreground">PDF, DOCX, TXT (MAX. 5MB)</p>
+                      </>
                     )}
-                >
-                    <div className="flex flex-col items-center justify-center pt-5 pb-6">
-                        <UploadCloud className={cn("w-10 h-10 mb-3", errors.resume ? "text-destructive" : "text-primary")} />
-                        {fileName ? (
-                          <>
-                            <p className="mb-2 text-sm text-foreground"><span className="font-semibold">{fileName}</span></p>
-                            <p className="text-xs text-muted-foreground">Click to change file</p>
-                          </>
-                        ) : (
-                          <>
-                            <p className="mb-2 text-sm text-foreground"><span className="font-semibold">Click to upload</span> or drag and drop</p>
-                            <p className="text-xs text-muted-foreground">PDF, DOCX, TXT (MAX. 5MB)</p>
-                          </>
-                        )}
-                    </div>
-                    <Input id="resume-upload-input" type="file" className="hidden" {...register("resume")} />
-                </label>
-            </div>
+                     {isDragOver && !fileName && (
+                        <p className="mt-2 text-sm font-semibold text-primary">Drop your file here!</p>
+                    )}
+                </div>
+                <Input id="resume-upload-input" type="file" className="hidden" {...register("resume")} />
+            </label>
             {errors.resume && <p className="text-sm text-destructive pt-1">{errors.resume.message}</p>}
           </div>
-          
+
           <Button type="submit" className="w-full text-lg py-6" disabled={loading || !watchedFiles || watchedFiles.length === 0}>
             {loading ? <Loader size={24} className="mr-2" /> : buttonIcon}
             {loading ? (isCandidateMode ? "Processing Resume..." : "Parsing Resume...") : buttonText}
@@ -233,4 +277,3 @@ export function ResumeUploadForm({
     </Card>
   );
 }
-
